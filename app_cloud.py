@@ -40,6 +40,8 @@ def get_gspread_client():
         st.error(f"Could not connect to Google Sheets for orders. Error: {e}")
         return None
 
+orders_sheet = get_gspread_client()
+
 # --- LOAD INVENTORY DATA ---
 @st.cache_data(ttl=60)
 def load_data():
@@ -223,4 +225,5 @@ elif page == "📝 Order Desk":
                         <b>Items:</b> {row['Order Details']}
                     </div>
                     """, unsafe_allow_html=True)
+
 
