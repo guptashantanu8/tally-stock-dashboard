@@ -27,16 +27,18 @@ st.markdown("""
 def get_gspread_client():
     try:
         # Load the secure credentials from Streamlit Secrets
-        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        raw_secrets = st.secrets["GOOGLE_CREDENTIALS"]
+        
+        # MAGIC FIX: "strict=False" tells Python to ignore the hidden newline characters!
+        creds_dict = json.loads(raw_secrets, strict=False)
+        
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME).worksheet("Orders")
     except Exception as e:
-        st.error(f"Could not connect to Google Sheets for orders. Check Secrets. Error: {e}")
+        st.error(f"Could not connect to Google Sheets for orders. Error: {e}")
         return None
-
-orders_sheet = get_gspread_client()
 
 # --- LOAD INVENTORY DATA ---
 @st.cache_data(ttl=60)
@@ -221,3 +223,4 @@ elif page == "📝 Order Desk":
                         <b>Items:</b> {row['Order Details']}
                     </div>
                     """, unsafe_allow_html=True)
+
