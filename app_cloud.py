@@ -65,4 +65,48 @@ if not df.empty:
 
     st.divider()
 
-    # --- TABS
+    # --- TABS ---
+    tab1, tab2 = st.tabs(["📊 Volume Bar Chart", "📋 Detailed Stock List"])
+
+    with tab1:
+        st.subheader("Top Items by Physical Volume")
+        
+        if not filtered_df.empty:
+            # Sort to show the biggest quantities first
+            chart_df = filtered_df.sort_values('Quantity', ascending=False)
+            
+            # Create the Bar Graph
+            fig = px.bar(
+                chart_df, 
+                x='Item', 
+                y='Quantity', 
+                color='Group', # Automatically colors the bars by their stock group
+                hover_data=['Display Qty'],
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            
+            # Make it look clean
+            fig.update_layout(
+                xaxis_title="Stock Item",
+                yaxis_title="Quantity",
+                xaxis_tickangle=-45, # Tilts the text so long names don't overlap
+                height=600,
+                plot_bgcolor="white" # Forces a clean white background for the chart
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No items match your search criteria.")
+
+    with tab2:
+        if not filtered_df.empty:
+            st.dataframe(
+                filtered_df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Quantity"], ascending=False),
+                column_config={
+                    "Quantity": st.column_config.NumberColumn("Physical Quantity", format="%d")
+                },
+                use_container_width=True, hide_index=True
+            )
+        else:
+            st.info("No items match your search criteria.")
+else:
+    st.warning("Waiting for data sync...")
