@@ -20,6 +20,8 @@ st.markdown("""
     .stApp { background-color: #ffffff; color: #000000; }
     .order-card { padding: 15px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 5px; border-left: 5px solid #007bff; background-color: #f8f9fa;}
     .completed-card { border-left: 5px solid #28a745; background-color: #f8f9fa; margin-bottom: 10px;}
+    .item-banner { background-color: #e9ecef; padding: 12px 15px; border-radius: 8px 8px 0px 0px; border-left: 5px solid #17a2b8; margin-top: 20px;}
+    .item-inputs { background-color: #f8f9fa; padding: 15px; border-radius: 0px 0px 8px 8px; border: 1px solid #e9ecef; border-top: none; margin-bottom: 10px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -124,40 +126,48 @@ elif page == "📝 Order Desk":
         
         customer_name = st.text_input("👤 Customer Name", placeholder="e.g. Sharma Traders")
         
-        st.write("🛒 Select Items & Quantities")
+        st.write("🛒 Select Items to Add to Cart")
         item_list = df['Item'].tolist() if not df.empty else []
-        
-        # You can select multiple items at once here!
-        selected_items = st.multiselect("Choose Items from Inventory", item_list)
+        selected_items = st.multiselect("Search and choose items...", item_list)
         
         order_details_dict = {}
+        
         if selected_items:
-            st.markdown("---")
-            st.markdown("#### Specify Quantities")
+            st.markdown("### 🛒 Cart Details")
             
-            # This creates a dedicated input row for EVERY item selected
+            # Create a vertical stack of Card Banners for every item selected
             for item in selected_items:
-                st.markdown(f"**{item}**")
-                col1, col2, col3 = st.columns([1, 1, 1])
+                # Fetch live data for this specific item
+                item_data = df[df['Item'] == item]
+                avail_qty = item_data['Quantity'].iloc[0] if not item_data.empty else 0
+                unit = item_data['Unit'].iloc[0] if not item_data.empty else "units"
                 
-                unit = df[df['Item'] == item]['Unit'].iloc[0] if not df.empty else "units"
+                # 1. THE EXTRA CARD BANNER (Shows Name & Live Stock)
+                st.markdown(f"""
+                <div class="item-banner">
+                    <h4 style="margin:0; padding:0; color: #333;">{item}</h4>
+                    <span style="color: #4CAF50; font-size: 15px; font-weight: bold;">📦 Available Stock: {avail_qty:,.0f} {unit}</span>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                with col1:
-                    qty = st.number_input(f"Primary Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_qty_{item}")
-                with col2:
-                    # Optional Alternate Quantity
+                # 2. THE ROW-WISE INPUTS (Tucked inside a neat box under the banner)
+                st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
+                c1, c2, c3 = st.columns([1, 1, 1])
+                
+                with c1:
+                    qty = st.number_input(f"Order Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_qty_{item}")
+                with c2:
                     alt_qty = st.number_input(f"Alt Qty (Optional)", min_value=0.0, value=0.0, step=1.0, key=f"a_qty_{item}")
-                with col3:
-                    # Optional Alternate Unit (e.g., Rolls, Boxes)
+                with c3:
                     alt_unit = st.text_input(f"Alt Unit (e.g. Rolls, Boxes)", key=f"a_unit_{item}")
+                st.markdown('</div>', unsafe_allow_html=True)
                 
-                # Combine the inputs into a clean string
+                # Combine the inputs into the order string
                 detail_str = f"{qty} {unit}"
                 if alt_qty > 0 and alt_unit:
                     detail_str += f" (Alt: {alt_qty} {alt_unit})"
                     
                 order_details_dict[item] = detail_str
-                st.markdown("---")
         
         st.write("") 
         if st.button("🚀 Submit Order", type="primary"):
@@ -168,7 +178,6 @@ elif page == "📝 Order Desk":
             else:
                 order_id = str(uuid.uuid4())[:8].upper()
                 order_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                # Format the final order string neatly
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 
                 try:
