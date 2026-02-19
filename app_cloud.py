@@ -4,13 +4,14 @@ import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-import uuid
 import time
 from datetime import datetime
+import pytz
 
 # --- CONFIGURATION ---
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSGCN0vX5T-HTyvx1Bkbm8Jm8QlQrZRgYj_0_E2kKX7UKQvE12oVQ0s-QZqkct7Ev6c0sp3Bqx82JQR/pub?output=csv" # Put your CSV link here!
 SHEET_NAME = "Tally Live Stock"
+IST = pytz.timezone('Asia/Kolkata') # Indian Standard Time
 
 st.set_page_config(page_title="Manglam Tradelink Portal", layout="wide", page_icon="🏭")
 
@@ -22,6 +23,9 @@ st.markdown("""
     .completed-card { border-left: 5px solid #28a745; background-color: #f8f9fa; margin-bottom: 10px;}
     .item-banner { background-color: #e9ecef; padding: 12px 15px; border-radius: 8px 8px 0px 0px; border-left: 5px solid #17a2b8; margin-top: 20px;}
     .item-inputs { background-color: #f8f9fa; padding: 15px; border-radius: 0px 0px 8px 8px; border: 1px solid #e9ecef; border-top: none; margin-bottom: 10px;}
+    .order-table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 10px; background-color: white; border-radius: 5px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .order-table th { background-color: #f1f3f5; padding: 8px 12px; text-align: left; border-bottom: 2px solid #ddd; font-size: 14px;}
+    .order-table td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 14px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -58,6 +62,20 @@ def load_data():
         return pd.DataFrame()
 
 df = load_data()
+
+# --- HELPER: HTML TABLE GENERATOR ---
+def generate_html_table(details_str):
+    # Splits the custom string (ItemA: Qty | ItemB: Qty) into a clean HTML table
+    items = details_str.split(" | ")
+    html = "<table class='order-table'><tr><th>Stock Item</th><th>Quantity Ordered</th></tr>"
+    for item in items:
+        if ": " in item:
+            name, qty = item.split(": ", 1)
+            html += f"<tr><td><b>{name}</b></td><td>{qty}</td></tr>"
+        else:
+            html += f"<tr><td colspan='2'>{item}</td></tr>"
+    html += "</table>"
+    return html
 
 # --- APP NAVIGATION ---
 st.sidebar.title("🏢 Nyc Brand Portal")
@@ -118,6 +136,13 @@ if page == "📦 Inventory Dashboard":
 elif page == "📝 Order Desk":
     st.title("📝 Order Management")
     
+    # FETCH LIVE ORDERS EARLY (We need this to calculate the daily Order ID)
+    try:
+        all_orders = orders_sheet.get_all_records()
+        orders_df = pd.DataFrame(all_orders)
+    except:
+        orders_df = pd.DataFrame()
+        
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
     # --- TAB 1: PLACE ORDER ---
@@ -135,14 +160,11 @@ elif page == "📝 Order Desk":
         if selected_items:
             st.markdown("### 🛒 Cart Details")
             
-            # Create a vertical stack of Card Banners for every item selected
             for item in selected_items:
-                # Fetch live data for this specific item
                 item_data = df[df['Item'] == item]
                 avail_qty = item_data['Quantity'].iloc[0] if not item_data.empty else 0
                 unit = item_data['Unit'].iloc[0] if not item_data.empty else "units"
                 
-                # 1. THE EXTRA CARD BANNER (Shows Name & Live Stock)
                 st.markdown(f"""
                 <div class="item-banner">
                     <h4 style="margin:0; padding:0; color: #333;">{item}</h4>
@@ -150,7 +172,6 @@ elif page == "📝 Order Desk":
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 2. THE ROW-WISE INPUTS (Tucked inside a neat box under the banner)
                 st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
                 c1, c2, c3 = st.columns([1, 1, 1])
                 
@@ -162,7 +183,6 @@ elif page == "📝 Order Desk":
                     alt_unit = st.text_input(f"Alt Unit (e.g. Rolls, Boxes)", key=f"a_unit_{item}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                # Combine the inputs into the order string
                 detail_str = f"{qty} {unit}"
                 if alt_qty > 0 and alt_unit:
                     detail_str += f" (Alt: {alt_qty} {alt_unit})"
@@ -176,25 +196,36 @@ elif page == "📝 Order Desk":
             elif not selected_items:
                 st.error("Please select at least one item.")
             else:
-                order_id = str(uuid.uuid4())[:8].upper()
-                order_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # 1. CALCULATE IST TIME & DATE
+                now_ist = datetime.now(IST)
+                date_str = now_ist.strftime("%d.%m.%y") # e.g. 19.02.26
+                full_time_str = now_ist.strftime("%d-%m-%Y %I:%M %p")
+                
+                # 2. CALCULATE TODAY'S ORDER NUMBER (#x)
+                today_prefix = f"{date_str}..#"
+                next_x = 1
+                
+                if not orders_df.empty and 'Order ID' in orders_df.columns:
+                    # Find all orders that start with today's date prefix
+                    today_orders = orders_df[orders_df['Order ID'].astype(str).str.startswith(today_prefix)]
+                    if not today_orders.empty:
+                        try:
+                            # Extract the number after the # symbol
+                            nums = today_orders['Order ID'].apply(lambda x: int(str(x).split('..#')[1]))
+                            next_x = nums.max() + 1
+                        except:
+                            next_x = len(today_orders) + 1
+                            
+                order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 
                 try:
-                    orders_sheet.append_row([order_id, order_date, customer_name, details_str, "Pending"])
-                    st.success(f"✅ Order #{order_id} placed successfully! Refreshing in 5 seconds...")
-                    
+                    orders_sheet.append_row([order_id, full_time_str, customer_name, details_str, "Pending"])
+                    st.success(f"✅ Order {order_id} placed successfully! Refreshing in 5 seconds...")
                     time.sleep(5)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save order: {e}")
-
-    # --- FETCH LIVE ORDERS FROM SHEET ---
-    try:
-        all_orders = orders_sheet.get_all_records()
-        orders_df = pd.DataFrame(all_orders)
-    except:
-        orders_df = pd.DataFrame()
 
     # --- TAB 2: PENDING ORDERS ---
     with order_tab2:
@@ -205,16 +236,19 @@ elif page == "📝 Order Desk":
             if pending_df.empty:
                 st.info("No pending orders right now. Great job!")
             else:
-                pending_df = pending_df.sort_values(by='Date', ascending=False)
+                # We sort by the index to keep newest at the top
+                pending_df = pending_df.iloc[::-1]
                 
                 for index, row in pending_df.iterrows():
+                    table_html = generate_html_table(row['Order Details'])
+                    
                     with st.container():
                         st.markdown(f"""
                         <div class="order-card">
-                            <b>Order ID:</b> {row['Order ID']} <br>
-                            <b>Date:</b> {row['Date']} <br>
-                            <b>Customer:</b> {row['Customer Name']} <br>
-                            <b>Items:</b> {row['Order Details']}
+                            <h4 style="margin-top:0; color:#0056b3;">Order {row['Order ID']}</h4>
+                            <b>Date:</b> {row['Date']} (IST)<br>
+                            <b>Customer:</b> <span style="font-size: 16px; font-weight:bold; color:#333;">{row['Customer Name']}</span> <br>
+                            {table_html}
                         </div>
                         """, unsafe_allow_html=True)
                         
@@ -240,13 +274,16 @@ elif page == "📝 Order Desk":
             if completed_df.empty:
                 st.info("No completed orders yet.")
             else:
-                completed_df = completed_df.sort_values(by='Date', ascending=False)
+                completed_df = completed_df.iloc[::-1]
+                
                 for index, row in completed_df.iterrows():
+                    table_html = generate_html_table(row['Order Details'])
+                    
                     st.markdown(f"""
                     <div class="completed-card order-card">
-                        <b>Order ID:</b> {row['Order ID']} <br>
-                        <b>Date:</b> {row['Date']} <br>
-                        <b>Customer:</b> {row['Customer Name']} <br>
-                        <b>Items:</b> {row['Order Details']}
+                        <h4 style="margin-top:0; color:#28a745;">Order {row['Order ID']}</h4>
+                        <b>Date:</b> {row['Date']} (IST)<br>
+                        <b>Customer:</b> <span style="font-size: 16px; font-weight:bold; color:#333;">{row['Customer Name']}</span> <br>
+                        {table_html}
                     </div>
                     """, unsafe_allow_html=True)
