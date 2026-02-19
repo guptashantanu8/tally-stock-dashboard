@@ -19,7 +19,6 @@ def load_data():
             df['Unit'] = df['Unit'].fillna('units')
             df['Item'] = df['Item Name']
             df['Group'] = df['Group']
-            # Create a clean display string like "1500 pcs"
             df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
         return df
     except:
@@ -37,47 +36,33 @@ with c2:
         st.rerun()
 
 if not df.empty:
-    total_qty = df['Quantity'].sum()
-    top_group = df.groupby('Group')['Quantity'].sum().idxmax()
+    # --- GLOBAL SEARCH & FILTER ---
+    st.markdown("### 🔍 Search & Filter")
+    col_search, col_filter = st.columns(2)
+    
+    with col_search:
+        search_text = st.text_input("Search for an Item by name...", "")
+    with col_filter:
+        groups = ["All Groups"] + df['Group'].dropna().unique().tolist()
+        selected_group = st.selectbox("Filter by Stock Group:", groups)
+
+    # Apply the filters
+    filtered_df = df.copy()
+    if search_text:
+        filtered_df = filtered_df[filtered_df['Item'].str.contains(search_text, case=False, na=False)]
+    if selected_group != "All Groups":
+        filtered_df = filtered_df[filtered_df['Group'] == selected_group]
+
+    # Recalculate metrics based on what is currently filtered
+    total_qty = filtered_df['Quantity'].sum()
+    top_group = filtered_df.groupby('Group')['Quantity'].sum().idxmax() if not filtered_df.empty else "N/A"
     
     # METRICS
     m1, m2, m3 = st.columns(3)
-    m1.metric("📦 Total Physical Volume", f"{total_qty:,.0f} units")
-    m2.metric("📂 Largest Stock Group", top_group)
-    m3.metric("📋 Total Unique Items", len(df))
+    m1.metric("📦 Volume (Filtered)", f"{total_qty:,.0f} units")
+    m2.metric("📂 Top Group (Filtered)", top_group)
+    m3.metric("📋 Items Found", len(filtered_df))
 
     st.divider()
 
-    tab1, tab2 = st.tabs(["📊 Volume Heatmap", "📋 Detailed Stock List"])
-
-    with tab1:
-        st.subheader("Inventory Volume by Group (Click to expand)")
-        
-        # Treemap
-        fig = px.treemap(df, path=['Group', 'Item'], values='Quantity',
-                         color='Quantity', color_continuous_scale='Blues',
-                         hover_data=['Display Qty'])
-        
-        # Customize hover label
-        fig.update_traces(hovertemplate='<b>%{label}</b><br>Stock: %{customdata[0]}<extra></extra>')
-        fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=600)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with tab2:
-        # Group Filter
-        groups = ["All Groups"] + df['Group'].unique().tolist()
-        selected_group = st.selectbox("Filter by Stock Group:", groups)
-        
-        filtered_df = df.copy()
-        if selected_group != "All Groups":
-            filtered_df = filtered_df[filtered_df['Group'] == selected_group]
-
-        st.dataframe(
-            filtered_df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Group", "Quantity"], ascending=[True, False]),
-            column_config={
-                "Quantity": st.column_config.NumberColumn("Physical Quantity", format="%d")
-            },
-            use_container_width=True, hide_index=True
-        )
-else:
-    st.warning("Waiting for data sync...")
+    # --- TABS
