@@ -53,7 +53,7 @@ orders_sheet, users_sheet, restock_sheet, history_sheet = get_gspread_client()
 # --- CONFIGURE GEMINI AI ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    ai_model = genai.GenerativeModel('gemini-2.5-flash')
 except:
     ai_model = None
 
@@ -310,3 +310,4 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
