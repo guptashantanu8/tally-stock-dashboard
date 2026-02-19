@@ -44,11 +44,11 @@ def get_gspread_client():
         client = gspread.authorize(creds)
         db = client.open(SHEET_NAME)
         # Fetching all required sheets safely
-        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots")
+        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales")
     except Exception as e:
         return None, None, None, None
 
-orders_sheet, users_sheet, restock_sheet, history_sheet = get_gspread_client()
+orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -264,37 +264,47 @@ elif page == "📝 Order Desk":
 # --- PAGE 3: AI RESTOCK ADVISOR ---
 elif page == "🤖 AI Restock Advisor":
     st.title("🤖 Supply Chain Intelligence")
-    st.markdown('<div class="ai-card"><h4>🧠 Gemini AI Analysis</h4><p>Click below to have Google Gemini analyze your live inventory, historical burn rate, and lead times to generate a predictive purchasing report.</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="ai-card"><h4>🧠 Gemini AI Predictive Analysis</h4><p>Click below to have Gemini analyze your live inventory against the <b>last 15 days of outward sales</b> and your lead times to generate a highly prioritized reordering report.</p></div>', unsafe_allow_html=True)
     
     if not ai_model:
         st.error("Gemini API Key missing or invalid in Secrets.")
     else:
         if st.button("✨ Generate Smart Restock Report", type="primary"):
-            with st.spinner("Gemini is analyzing millions of data points..."):
+            with st.spinner("Gemini is analyzing burn rates, lead times, and current stock..."):
                 try:
                     # Gather Data for AI
                     live_stock = df.to_csv(index=False) if not df.empty else "No live stock data."
                     
-                    try:
-                        restock_times = pd.DataFrame(restock_sheet.get_all_records()).to_csv(index=False)
+                    try: restock_times = pd.DataFrame(restock_sheet.get_all_records()).to_csv(index=False)
                     except: restock_times = "No restock lead times configured."
                     
-                    # Construct Prompt
-                    prompt = f"""
-                    You are an expert AI Supply Chain Manager for a business named Manglam Tradelink (Brand: Nyc) located in New Delhi, manufacturing bags and using PVC/PU coated fabrics.
+                    try: recent_sales = pd.DataFrame(sales_sheet.get_all_records()).to_csv(index=False)
+                    except: recent_sales = "No recent sales data available."
                     
-                    Analyze this data and write an executive advisory report. 
-                    Identify items that are running critically low based on their current stock and lead time. Group your recommendations by urgency (Immediate Order, Order Soon, Healthy). Be concise, use bullet points, and highlight specific item names.
+                    # Highly tuned AI Prompt prioritizing recent sales
+                    prompt = f"""
+                    You are an expert AI Supply Chain Manager for Manglam Tradelink (Brand: Nyc), manufacturing bags with fabrics like Twill, 1000D PU, 1000D PVC, etc.
+                    
+                    CRITICAL INSTRUCTION: You MUST give the HIGHEST PRIORITY to the "RECENT 15-DAY SALES (OUTWARD MOVEMENT)" data. 
+                    If an item is selling fast in the last 15 days, it needs to be reordered immediately to meet current demand velocity. Calculate the daily burn rate (15-Day Sales / 15) and multiply it by the Lead Time to determine if current stock is dangerously low.
+                    
+                    Analyze this data and write an executive advisory report grouped by urgency:
+                    1. 🔴 URGENT REORDER (Stock will likely run out before lead time finishes based on recent 15-day sales).
+                    2. 🟡 MONITOR CLOSELY (Selling steadily, reorder soon).
+                    3. 🟢 HEALTHY STOCK (Current stock easily covers recent velocity + lead time).
                     
                     CURRENT INVENTORY DATA:
                     {live_stock}
+                    
+                    RECENT 15-DAY SALES (OUTWARD MOVEMENT):
+                    {recent_sales}
                     
                     CONFIGURED LEAD TIMES (Days to Restock):
                     {restock_times}
                     """
                     
                     response = ai_model.generate_content(prompt)
-                    st.markdown("### 📊 AI Advisory Report")
+                    st.markdown("### 📊 Predictive Restock Report")
                     st.write(response.text)
                 except Exception as e:
                     st.error(f"AI Generation Failed: {e}")
@@ -310,4 +320,5 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
