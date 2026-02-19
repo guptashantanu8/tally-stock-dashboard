@@ -69,21 +69,35 @@ if not st.session_state.logged_in:
     if st.button("Login", type="primary", use_container_width=True):
         if users_sheet:
             users_data = users_sheet.get_all_records()
-            df_users = pd.DataFrame(users_data)
             
-            # Check credentials
-            user_match = df_users[(df_users['User ID'] == login_id) & (df_users['Password'].astype(str) == str(login_pass))]
-            
-            if not user_match.empty:
-                st.session_state.logged_in = True
-                st.session_state.user_id = user_match.iloc[0]['User ID']
-                st.session_state.user_name = user_match.iloc[0]['Name']
-                st.session_state.role = user_match.iloc[0]['Role']
-                st.success(f"Welcome back, {st.session_state.user_name}!")
-                time.sleep(1)
-                st.rerun()
+            if not users_data:
+                st.error("Database Error: The 'Users' sheet is empty. Please add the admin account in row 2.")
             else:
-                st.error("❌ Invalid User ID or Password")
+                df_users = pd.DataFrame(users_data)
+                
+                # MAGIC FIX: Strip hidden spaces from headers to prevent KeyErrors!
+                df_users.columns = df_users.columns.astype(str).str.strip()
+                
+                # Ensure the columns actually exist before checking
+                if 'User ID' not in df_users.columns or 'Password' not in df_users.columns:
+                    st.error(f"Database Error: Could not find 'User ID' or 'Password' columns. Found these instead: {df_users.columns.tolist()}")
+                else:
+                    # Check credentials (forces both to be strings so '1234' matches 1234)
+                    user_match = df_users[
+                        (df_users['User ID'].astype(str).str.strip() == str(login_id).strip()) & 
+                        (df_users['Password'].astype(str).str.strip() == str(login_pass).strip())
+                    ]
+                    
+                    if not user_match.empty:
+                        st.session_state.logged_in = True
+                        st.session_state.user_id = user_match.iloc[0]['User ID']
+                        st.session_state.user_name = user_match.iloc[0]['Name']
+                        st.session_state.role = user_match.iloc[0]['Role']
+                        st.success(f"Welcome back, {st.session_state.user_name}!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid User ID or Password")
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop() # HALTS THE APP HERE IF NOT LOGGED IN
 
@@ -359,3 +373,4 @@ elif page == "⚙️ Admin Dashboard":
         st.dataframe(display_users, use_container_width=True, hide_index=True)
     except:
         st.info("Loading user directory...")
+
