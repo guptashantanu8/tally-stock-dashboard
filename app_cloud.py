@@ -5,6 +5,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import uuid
+import time
 from datetime import datetime
 
 # --- CONFIGURATION ---
@@ -17,21 +18,17 @@ st.set_page_config(page_title="Manglam Tradelink Portal", layout="wide", page_ic
 st.markdown("""
     <style>
     .stApp { background-color: #ffffff; color: #000000; }
-    .order-card { padding: 15px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 10px; border-left: 5px solid #007bff; }
-    .completed-card { border-left: 5px solid #28a745; }
+    .order-card { padding: 15px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 5px; border-left: 5px solid #007bff; background-color: #f8f9fa;}
+    .completed-card { border-left: 5px solid #28a745; background-color: #f8f9fa; margin-bottom: 10px;}
     </style>
     """, unsafe_allow_html=True)
 
-# --- GOOGLE SHEETS CONNECTION (For Writing Orders) ---
+# --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_gspread_client():
     try:
-        # Load the secure credentials from Streamlit Secrets
         raw_secrets = st.secrets["GOOGLE_CREDENTIALS"]
-        
-        # MAGIC FIX: "strict=False" tells Python to ignore the hidden newline characters!
         creds_dict = json.loads(raw_secrets, strict=False)
-        
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
@@ -70,7 +67,7 @@ if st.sidebar.button("🔄 Force Refresh Data"):
     st.rerun()
 
 # ==========================================
-# PAGE 1: INVENTORY DASHBOARD (Your existing app)
+# PAGE 1: INVENTORY DASHBOARD
 # ==========================================
 if page == "📦 Inventory Dashboard":
     st.title("📦 Live Physical Inventory")
@@ -124,46 +121,52 @@ elif page == "📝 Order Desk":
     # --- TAB 1: PLACE ORDER ---
     with order_tab1:
         st.subheader("Create a New Order")
-        with st.form("new_order_form"):
-            customer_name = st.text_input("👤 Customer Name", placeholder="e.g. Sharma Traders")
-            
-            st.write("🛒 Select Items & Quantities")
-            item_list = df['Item'].tolist() if not df.empty else []
-            selected_items = st.multiselect("Choose Items from Inventory", item_list)
-            
-            order_details_dict = {}
-            if selected_items:
-                for item in selected_items:
-                    # Find unit for this item to display next to input
+        
+        # We removed the st.form so the UI updates instantly!
+        customer_name = st.text_input("👤 Customer Name", placeholder="e.g. Sharma Traders")
+        
+        st.write("🛒 Select Items & Quantities")
+        item_list = df['Item'].tolist() if not df.empty else []
+        selected_items = st.multiselect("Choose Items from Inventory", item_list)
+        
+        order_details_dict = {}
+        if selected_items:
+            # Create a clean layout for entering quantities instantly
+            for item in selected_items:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**{item}**")
+                with col2:
                     unit = df[df['Item'] == item]['Unit'].iloc[0] if not df.empty else "units"
-                    qty = st.number_input(f"Quantity for {item} ({unit})", min_value=1, value=1, step=1)
+                    # Unique key for each number input so Streamlit doesn't get confused
+                    qty = st.number_input(f"Qty ({unit})", min_value=1, value=1, step=1, key=f"qty_{item}", label_visibility="collapsed")
                     order_details_dict[item] = f"{qty} {unit}"
-            
-            submit_order = st.form_submit_button("Submit Order", type="primary")
-            
-            if submit_order:
-                if not customer_name:
-                    st.error("Please enter a customer name.")
-                elif not selected_items:
-                    st.error("Please select at least one item.")
-                else:
-                    # Generate Data
-                    order_id = str(uuid.uuid4())[:8].upper() # Creates a short unique ID like 'A4B9F2'
-                    order_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        st.write("") # Spacer
+        if st.button("🚀 Submit Order", type="primary"):
+            if not customer_name:
+                st.error("Please enter a customer name.")
+            elif not selected_items:
+                st.error("Please select at least one item.")
+            else:
+                # Generate Data
+                order_id = str(uuid.uuid4())[:8].upper()
+                order_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
+                
+                # Push to Sheets
+                try:
+                    orders_sheet.append_row([order_id, order_date, customer_name, details_str, "Pending"])
+                    st.success(f"✅ Order #{order_id} placed successfully! Refreshing in 5 seconds...")
                     
-                    # Format details into a readable string
-                    details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
-                    
-                    # Push to Google Sheets
-                    try:
-                        orders_sheet.append_row([order_id, order_date, customer_name, details_str, "Pending"])
-                        st.success(f"✅ Order #{order_id} placed successfully for {customer_name}!")
-                    except Exception as e:
-                        st.error(f"Failed to save order: {e}")
+                    # 5 Second Auto-Refresh
+                    time.sleep(5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to save order: {e}")
 
     # --- FETCH LIVE ORDERS FROM SHEET ---
     try:
-        # Get all records creates a list of dictionaries
         all_orders = orders_sheet.get_all_records()
         orders_df = pd.DataFrame(all_orders)
     except:
@@ -178,33 +181,33 @@ elif page == "📝 Order Desk":
             if pending_df.empty:
                 st.info("No pending orders right now. Great job!")
             else:
-                # Sort by Date
                 pending_df = pending_df.sort_values(by='Date', ascending=False)
                 
                 for index, row in pending_df.iterrows():
-                    st.markdown(f"""
-                    <div class="order-card">
-                        <b>Order ID:</b> {row['Order ID']} <br>
-                        <b>Date:</b> {row['Date']} <br>
-                        <b>Customer:</b> {row['Customer Name']} <br>
-                        <b>Items:</b> {row['Order Details']}
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.divider()
-                st.write("### Mark Order as Completed")
-                order_to_complete = st.selectbox("Select Order ID to close:", pending_df['Order ID'].tolist())
-                if st.button("✅ Mark as Completed"):
-                    try:
-                        # Find the row in Google Sheets and update it
-                        cell = orders_sheet.find(order_to_complete)
-                        orders_sheet.update_cell(cell.row, 5, 'Completed') # Column 5 is Status
-                        st.success(f"Order {order_to_complete} completed!")
-                        st.rerun() # Refresh app to update lists
-                    except Exception as e:
-                        st.error(f"Could not update status: {e}")
+                    # Put the card and the button inside a neat container
+                    with st.container():
+                        st.markdown(f"""
+                        <div class="order-card">
+                            <b>Order ID:</b> {row['Order ID']} <br>
+                            <b>Date:</b> {row['Date']} <br>
+                            <b>Customer:</b> {row['Customer Name']} <br>
+                            <b>Items:</b> {row['Order Details']}
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Add the button directly under the card!
+                        if st.button(f"✅ Mark Order {row['Order ID']} Complete", key=f"btn_{row['Order ID']}"):
+                            try:
+                                cell = orders_sheet.find(row['Order ID'])
+                                orders_sheet.update_cell(cell.row, 5, 'Completed')
+                                st.success(f"Marked {row['Order ID']} as completed! Refreshing...")
+                                time.sleep(2) # Short pause to show success
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error updating: {e}")
+                        st.write("") # Add a little space between orders
         else:
-            st.info("No orders found in the database yet.")
+            st.info("No orders found.")
 
     # --- TAB 3: COMPLETED ORDERS ---
     with order_tab3:
@@ -218,12 +221,10 @@ elif page == "📝 Order Desk":
                 completed_df = completed_df.sort_values(by='Date', ascending=False)
                 for index, row in completed_df.iterrows():
                     st.markdown(f"""
-                    <div class="order-card completed-card">
+                    <div class="completed-card order-card">
                         <b>Order ID:</b> {row['Order ID']} <br>
                         <b>Date:</b> {row['Date']} <br>
                         <b>Customer:</b> {row['Customer Name']} <br>
                         <b>Items:</b> {row['Order Details']}
                     </div>
                     """, unsafe_allow_html=True)
-
-
