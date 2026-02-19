@@ -122,44 +122,59 @@ elif page == "📝 Order Desk":
     with order_tab1:
         st.subheader("Create a New Order")
         
-        # We removed the st.form so the UI updates instantly!
         customer_name = st.text_input("👤 Customer Name", placeholder="e.g. Sharma Traders")
         
         st.write("🛒 Select Items & Quantities")
         item_list = df['Item'].tolist() if not df.empty else []
+        
+        # You can select multiple items at once here!
         selected_items = st.multiselect("Choose Items from Inventory", item_list)
         
         order_details_dict = {}
         if selected_items:
-            # Create a clean layout for entering quantities instantly
+            st.markdown("---")
+            st.markdown("#### Specify Quantities")
+            
+            # This creates a dedicated input row for EVERY item selected
             for item in selected_items:
-                col1, col2 = st.columns([3, 1])
+                st.markdown(f"**{item}**")
+                col1, col2, col3 = st.columns([1, 1, 1])
+                
+                unit = df[df['Item'] == item]['Unit'].iloc[0] if not df.empty else "units"
+                
                 with col1:
-                    st.write(f"**{item}**")
+                    qty = st.number_input(f"Primary Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_qty_{item}")
                 with col2:
-                    unit = df[df['Item'] == item]['Unit'].iloc[0] if not df.empty else "units"
-                    # Unique key for each number input so Streamlit doesn't get confused
-                    qty = st.number_input(f"Qty ({unit})", min_value=1, value=1, step=1, key=f"qty_{item}", label_visibility="collapsed")
-                    order_details_dict[item] = f"{qty} {unit}"
+                    # Optional Alternate Quantity
+                    alt_qty = st.number_input(f"Alt Qty (Optional)", min_value=0.0, value=0.0, step=1.0, key=f"a_qty_{item}")
+                with col3:
+                    # Optional Alternate Unit (e.g., Rolls, Boxes)
+                    alt_unit = st.text_input(f"Alt Unit (e.g. Rolls, Boxes)", key=f"a_unit_{item}")
+                
+                # Combine the inputs into a clean string
+                detail_str = f"{qty} {unit}"
+                if alt_qty > 0 and alt_unit:
+                    detail_str += f" (Alt: {alt_qty} {alt_unit})"
+                    
+                order_details_dict[item] = detail_str
+                st.markdown("---")
         
-        st.write("") # Spacer
+        st.write("") 
         if st.button("🚀 Submit Order", type="primary"):
             if not customer_name:
                 st.error("Please enter a customer name.")
             elif not selected_items:
                 st.error("Please select at least one item.")
             else:
-                # Generate Data
                 order_id = str(uuid.uuid4())[:8].upper()
                 order_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Format the final order string neatly
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 
-                # Push to Sheets
                 try:
                     orders_sheet.append_row([order_id, order_date, customer_name, details_str, "Pending"])
                     st.success(f"✅ Order #{order_id} placed successfully! Refreshing in 5 seconds...")
                     
-                    # 5 Second Auto-Refresh
                     time.sleep(5)
                     st.rerun()
                 except Exception as e:
@@ -184,7 +199,6 @@ elif page == "📝 Order Desk":
                 pending_df = pending_df.sort_values(by='Date', ascending=False)
                 
                 for index, row in pending_df.iterrows():
-                    # Put the card and the button inside a neat container
                     with st.container():
                         st.markdown(f"""
                         <div class="order-card">
@@ -195,17 +209,16 @@ elif page == "📝 Order Desk":
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        # Add the button directly under the card!
                         if st.button(f"✅ Mark Order {row['Order ID']} Complete", key=f"btn_{row['Order ID']}"):
                             try:
                                 cell = orders_sheet.find(row['Order ID'])
                                 orders_sheet.update_cell(cell.row, 5, 'Completed')
                                 st.success(f"Marked {row['Order ID']} as completed! Refreshing...")
-                                time.sleep(2) # Short pause to show success
+                                time.sleep(2)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Error updating: {e}")
-                        st.write("") # Add a little space between orders
+                        st.write("")
         else:
             st.info("No orders found.")
 
