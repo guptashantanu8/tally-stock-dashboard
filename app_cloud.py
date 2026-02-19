@@ -8,13 +8,6 @@ SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSGCN0vX5T-HTyv
 
 st.set_page_config(page_title="Dragon Fly Inventory", layout="wide", page_icon="🐉")
 
-# --- CUSTOM STYLE ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #0E1117; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
-
 # --- LOAD DATA ---
 @st.cache_data(ttl=60)
 def load_data():
@@ -60,12 +53,12 @@ if not df.empty:
     with tab1:
         st.subheader("Inventory Volume by Group (Click to expand)")
         
-        # Treemap now uses Quantity for size, and shows the Unit when you hover
+        # Treemap
         fig = px.treemap(df, path=['Group', 'Item'], values='Quantity',
                          color='Quantity', color_continuous_scale='Blues',
                          hover_data=['Display Qty'])
         
-        # Customize hover label to look clean
+        # Customize hover label
         fig.update_traces(hovertemplate='<b>%{label}</b><br>Stock: %{customdata[0]}<extra></extra>')
         fig.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=600)
         st.plotly_chart(fig, use_container_width=True)
