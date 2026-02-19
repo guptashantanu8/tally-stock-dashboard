@@ -7,11 +7,12 @@ import json
 import time
 from datetime import datetime
 import pytz
+import uuid
 
 # --- CONFIGURATION ---
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSGCN0vX5T-HTyvx1Bkbm8Jm8QlQrZRgYj_0_E2kKX7UKQvE12oVQ0s-QZqkct7Ev6c0sp3Bqx82JQR/pub?output=csv" # Put your CSV link here!
 SHEET_NAME = "Tally Live Stock"
-IST = pytz.timezone('Asia/Kolkata') # Indian Standard Time
+IST = pytz.timezone('Asia/Kolkata')
 
 st.set_page_config(page_title="Manglam Tradelink Portal", layout="wide", page_icon="🏭")
 
@@ -26,6 +27,7 @@ st.markdown("""
     .order-table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 10px; background-color: white; border-radius: 5px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
     .order-table th { background-color: #f1f3f5; padding: 8px 12px; text-align: left; border-bottom: 2px solid #ddd; font-size: 14px;}
     .order-table td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 14px;}
+    .login-box { max-width: 400px; margin: 0 auto; padding: 30px; border: 1px solid #ddd; border-radius: 10px; background-color: #f8f9fa; box-shadow: 0 4px 8px rgba(0,0,0,0.1);}
     </style>
     """, unsafe_allow_html=True)
 
@@ -38,12 +40,56 @@ def get_gspread_client():
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        return client.open(SHEET_NAME).worksheet("Orders")
+        # Return both sheets now!
+        return client.open(SHEET_NAME).worksheet("Orders"), client.open(SHEET_NAME).worksheet("Users")
     except Exception as e:
-        st.error(f"Could not connect to Google Sheets for orders. Error: {e}")
-        return None
+        st.error(f"Could not connect to Google Sheets. Error: {e}")
+        return None, None
 
-orders_sheet = get_gspread_client()
+orders_sheet, users_sheet = get_gspread_client()
+
+# --- SESSION STATE INITIALIZATION ---
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.user_id = ""
+    st.session_state.user_name = ""
+    st.session_state.role = ""
+
+# ==========================================
+# LOGIN SCREEN
+# ==========================================
+if not st.session_state.logged_in:
+    st.markdown("<h1 style='text-align: center; color: #333; margin-top: 50px;'>🏢 Manglam Tradelink Portal</h1>", unsafe_allow_html=True)
+    
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    st.subheader("Secure Login")
+    login_id = st.text_input("User ID")
+    login_pass = st.text_input("Password", type="password")
+    
+    if st.button("Login", type="primary", use_container_width=True):
+        if users_sheet:
+            users_data = users_sheet.get_all_records()
+            df_users = pd.DataFrame(users_data)
+            
+            # Check credentials
+            user_match = df_users[(df_users['User ID'] == login_id) & (df_users['Password'].astype(str) == str(login_pass))]
+            
+            if not user_match.empty:
+                st.session_state.logged_in = True
+                st.session_state.user_id = user_match.iloc[0]['User ID']
+                st.session_state.user_name = user_match.iloc[0]['Name']
+                st.session_state.role = user_match.iloc[0]['Role']
+                st.success(f"Welcome back, {st.session_state.user_name}!")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("❌ Invalid User ID or Password")
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.stop() # HALTS THE APP HERE IF NOT LOGGED IN
+
+# ==========================================
+# MAIN APP (Only runs if logged in)
+# ==========================================
 
 # --- LOAD INVENTORY DATA ---
 @st.cache_data(ttl=60)
@@ -63,9 +109,7 @@ def load_data():
 
 df = load_data()
 
-# --- HELPER: HTML TABLE GENERATOR ---
 def generate_html_table(details_str):
-    # Splits the custom string (ItemA: Qty | ItemB: Qty) into a clean HTML table
     items = details_str.split(" | ")
     html = "<table class='order-table'><tr><th>Stock Item</th><th>Quantity Ordered</th></tr>"
     for item in items:
@@ -78,17 +122,27 @@ def generate_html_table(details_str):
     return html
 
 # --- APP NAVIGATION ---
-st.sidebar.title("🏢 Nyc Brand Portal")
-page = st.sidebar.radio("Navigate", ["📦 Inventory Dashboard", "📝 Order Desk"])
+st.sidebar.title(f"🏢 Nyc Brand")
+st.sidebar.markdown(f"**User:** {st.session_state.user_name}")
+st.sidebar.markdown(f"**Role:** {st.session_state.role}")
+st.sidebar.divider()
+
+# Only show Admin Dashboard if the user is an Admin
+pages = ["📦 Inventory Dashboard", "📝 Order Desk"]
+if st.session_state.role == "Admin":
+    pages.append("⚙️ Admin Dashboard")
+
+page = st.sidebar.radio("Navigate", pages)
 
 st.sidebar.divider()
 if st.sidebar.button("🔄 Force Refresh Data"):
     st.cache_data.clear()
     st.rerun()
+if st.sidebar.button("🚪 Logout"):
+    st.session_state.logged_in = False
+    st.rerun()
 
-# ==========================================
-# PAGE 1: INVENTORY DASHBOARD
-# ==========================================
+# --- PAGE 1: INVENTORY DASHBOARD ---
 if page == "📦 Inventory Dashboard":
     st.title("📦 Live Physical Inventory")
     
@@ -130,13 +184,10 @@ if page == "📦 Inventory Dashboard":
     else:
         st.warning("Waiting for inventory sync...")
 
-# ==========================================
-# PAGE 2: ORDER DESK
-# ==========================================
+# --- PAGE 2: ORDER DESK ---
 elif page == "📝 Order Desk":
     st.title("📝 Order Management")
     
-    # FETCH LIVE ORDERS EARLY (We need this to calculate the daily Order ID)
     try:
         all_orders = orders_sheet.get_all_records()
         orders_df = pd.DataFrame(all_orders)
@@ -145,21 +196,15 @@ elif page == "📝 Order Desk":
         
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
-    # --- TAB 1: PLACE ORDER ---
     with order_tab1:
         st.subheader("Create a New Order")
-        
         customer_name = st.text_input("👤 Customer Name", placeholder="e.g. Sharma Traders")
-        
         st.write("🛒 Select Items to Add to Cart")
         item_list = df['Item'].tolist() if not df.empty else []
         selected_items = st.multiselect("Search and choose items...", item_list)
-        
         order_details_dict = {}
         
         if selected_items:
-            st.markdown("### 🛒 Cart Details")
-            
             for item in selected_items:
                 item_data = df[df['Item'] == item]
                 avail_qty = item_data['Quantity'].iloc[0] if not item_data.empty else 0
@@ -174,19 +219,17 @@ elif page == "📝 Order Desk":
                 
                 st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
                 c1, c2, c3 = st.columns([1, 1, 1])
-                
                 with c1:
                     qty = st.number_input(f"Order Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_qty_{item}")
                 with c2:
                     alt_qty = st.number_input(f"Alt Qty (Optional)", min_value=0.0, value=0.0, step=1.0, key=f"a_qty_{item}")
                 with c3:
-                    alt_unit = st.text_input(f"Alt Unit (e.g. Rolls, Boxes)", key=f"a_unit_{item}")
+                    alt_unit = st.text_input(f"Alt Unit", key=f"a_unit_{item}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
                 detail_str = f"{qty} {unit}"
                 if alt_qty > 0 and alt_unit:
                     detail_str += f" (Alt: {alt_qty} {alt_unit})"
-                    
                 order_details_dict[item] = detail_str
         
         st.write("") 
@@ -196,21 +239,16 @@ elif page == "📝 Order Desk":
             elif not selected_items:
                 st.error("Please select at least one item.")
             else:
-                # 1. CALCULATE IST TIME & DATE
                 now_ist = datetime.now(IST)
-                date_str = now_ist.strftime("%d.%m.%y") # e.g. 19.02.26
+                date_str = now_ist.strftime("%d.%m.%y")
                 full_time_str = now_ist.strftime("%d-%m-%Y %I:%M %p")
-                
-                # 2. CALCULATE TODAY'S ORDER NUMBER (#x)
                 today_prefix = f"{date_str}..#"
                 next_x = 1
                 
                 if not orders_df.empty and 'Order ID' in orders_df.columns:
-                    # Find all orders that start with today's date prefix
                     today_orders = orders_df[orders_df['Order ID'].astype(str).str.startswith(today_prefix)]
                     if not today_orders.empty:
                         try:
-                            # Extract the number after the # symbol
                             nums = today_orders['Order ID'].apply(lambda x: int(str(x).split('..#')[1]))
                             next_x = nums.max() + 1
                         except:
@@ -220,28 +258,24 @@ elif page == "📝 Order Desk":
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 
                 try:
-                    orders_sheet.append_row([order_id, full_time_str, customer_name, details_str, "Pending"])
-                    st.success(f"✅ Order {order_id} placed successfully! Refreshing in 5 seconds...")
-                    time.sleep(5)
+                    # Added empty string for the 'Completed By' column (Column F)
+                    orders_sheet.append_row([order_id, full_time_str, customer_name, details_str, "Pending", ""])
+                    st.success(f"✅ Order {order_id} placed successfully! Refreshing...")
+                    time.sleep(3)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to save order: {e}")
 
-    # --- TAB 2: PENDING ORDERS ---
     with order_tab2:
         st.subheader("⏳ Pending Orders")
         if not orders_df.empty and 'Status' in orders_df.columns:
             pending_df = orders_df[orders_df['Status'] == 'Pending']
-            
             if pending_df.empty:
                 st.info("No pending orders right now. Great job!")
             else:
-                # We sort by the index to keep newest at the top
                 pending_df = pending_df.iloc[::-1]
-                
                 for index, row in pending_df.iterrows():
                     table_html = generate_html_table(row['Order Details'])
-                    
                     with st.container():
                         st.markdown(f"""
                         <div class="order-card">
@@ -252,11 +286,15 @@ elif page == "📝 Order Desk":
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        if st.button(f"✅ Mark Order {row['Order ID']} Complete", key=f"btn_{row['Order ID']}"):
+                        if st.button(f"✅ Mark {row['Order ID']} Complete", key=f"btn_{row['Order ID']}"):
                             try:
                                 cell = orders_sheet.find(row['Order ID'])
+                                # Update Status to Completed
                                 orders_sheet.update_cell(cell.row, 5, 'Completed')
-                                st.success(f"Marked {row['Order ID']} as completed! Refreshing...")
+                                # RECORD WHO COMPLETED IT IN COLUMN 6 (F)
+                                orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
+                                
+                                st.success(f"Marked completed by {st.session_state.user_name}! Refreshing...")
                                 time.sleep(2)
                                 st.rerun()
                             except Exception as e:
@@ -265,19 +303,19 @@ elif page == "📝 Order Desk":
         else:
             st.info("No orders found.")
 
-    # --- TAB 3: COMPLETED ORDERS ---
     with order_tab3:
         st.subheader("✅ Completed Orders")
         if not orders_df.empty and 'Status' in orders_df.columns:
             completed_df = orders_df[orders_df['Status'] == 'Completed']
-            
             if completed_df.empty:
                 st.info("No completed orders yet.")
             else:
                 completed_df = completed_df.iloc[::-1]
-                
                 for index, row in completed_df.iterrows():
                     table_html = generate_html_table(row['Order Details'])
+                    # Safely handle old orders that might not have a 'Completed By' value
+                    completed_by = row.get('Completed By', 'Unknown')
+                    if not completed_by: completed_by = "Unknown"
                     
                     st.markdown(f"""
                     <div class="completed-card order-card">
@@ -285,5 +323,39 @@ elif page == "📝 Order Desk":
                         <b>Date:</b> {row['Date']} (IST)<br>
                         <b>Customer:</b> <span style="font-size: 16px; font-weight:bold; color:#333;">{row['Customer Name']}</span> <br>
                         {table_html}
+                        <hr style="margin: 10px 0px;">
+                        <span style="color: #6c757d; font-size: 14px;">✅ Completed by: <b>{completed_by}</b></span>
                     </div>
                     """, unsafe_allow_html=True)
+
+# --- PAGE 3: ADMIN DASHBOARD (Hidden from regular employees) ---
+elif page == "⚙️ Admin Dashboard":
+    st.title("⚙️ User Management")
+    st.write("Create and manage employee access.")
+    
+    with st.form("add_user_form"):
+        st.subheader("Add New Employee")
+        new_name = st.text_input("Full Name (e.g. Rahul Kumar)")
+        new_id = st.text_input("User ID (e.g. rahul123)")
+        new_pass = st.text_input("Password", type="password")
+        new_role = st.selectbox("Role", ["Employee", "Admin"])
+        
+        if st.form_submit_button("Create User"):
+            if new_name and new_id and new_pass:
+                try:
+                    users_sheet.append_row([new_id, new_pass, new_role, new_name])
+                    st.success(f"User '{new_name}' created successfully!")
+                except Exception as e:
+                    st.error(f"Error creating user: {e}")
+            else:
+                st.error("Please fill out all fields.")
+                
+    st.divider()
+    st.subheader("Current Users Directory")
+    try:
+        current_users = pd.DataFrame(users_sheet.get_all_records())
+        # Hide passwords from display!
+        display_users = current_users[['User ID', 'Name', 'Role']]
+        st.dataframe(display_users, use_container_width=True, hide_index=True)
+    except:
+        st.info("Loading user directory...")
