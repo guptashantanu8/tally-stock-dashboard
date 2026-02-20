@@ -44,11 +44,11 @@ def get_gspread_client():
         client = gspread.authorize(creds)
         db = client.open(SHEET_NAME)
         # Fetching all required sheets safely
-        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales")
+        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers")
     except Exception as e:
         return None, None, None, None
 
-orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet = get_gspread_client()
+orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -201,7 +201,28 @@ elif page == "📝 Order Desk":
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
     with order_tab1:
-        customer_name = st.text_input("👤 Customer Name", placeholder="e.g. Sharma Traders")
+        # Load synced customers
+        try:
+            cust_data = cust_sheet.get_all_records()
+            customer_list = [str(row['Customer Name']) for row in cust_data if 'Customer Name' in row]
+        except:
+            customer_list = []
+            
+        st.subheader("Create a New Order")
+        
+        # SMART CUSTOMER DROPDOWN
+        st.write("👤 **Customer Details**")
+        customer_dropdown = st.selectbox("Search Existing Customer", ["-- Type New Customer --"] + customer_list)
+        
+        if customer_dropdown == "-- Type New Customer --":
+            customer_name = st.text_input("Enter a new customer name:", placeholder="e.g. Sharma Traders")
+        else:
+            customer_name = customer_dropdown
+            
+        order_notes = st.text_input("📝 Order Notes (Optional)", placeholder="e.g. Dispatch via VRL Logistics, Urgent...")
+        
+        st.divider()
+        st.write("🛒 **Select Items to Add to Cart**")
         item_list = df['Item'].tolist() if not df.empty else []
         selected_items = st.multiselect("Search and choose items...", item_list)
         order_details_dict = {}
@@ -237,7 +258,8 @@ elif page == "📝 Order Desk":
                 order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 try:
-                    orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", ""])
+                    # WE NOW APPEND 7 COLUMNS (Including Notes at the end)
+                    orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
                     st.success(f"✅ Order {order_id} placed! Refreshing...")
                     time.sleep(3)
                     st.rerun()
@@ -320,5 +342,6 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
