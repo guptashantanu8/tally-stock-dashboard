@@ -43,10 +43,9 @@ def get_gspread_client():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         db = client.open(SHEET_NAME)
-        # Fetching all required sheets safely
         return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers")
     except Exception as e:
-        return None, None, None, None
+        return None, None, None, None, None, None
 
 orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet = get_gspread_client()
 
@@ -187,7 +186,9 @@ if page == "📦 Inventory Dashboard":
                 st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
-            st.dataframe(filtered_df[['Group', 'Item', 'Quantity', 'Unit']].sort_values("Quantity", ascending=False), use_container_width=True, hide_index=True)
+            # 🟢 UPGRADE: Sorted by Group (A-Z) first, then by Quantity highest to lowest!
+            sorted_df = filtered_df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Group", "Quantity"], ascending=[True, False])
+            st.dataframe(sorted_df, use_container_width=True, hide_index=True)
 
 # --- PAGE 2: ORDER DESK ---
 elif page == "📝 Order Desk":
@@ -204,18 +205,20 @@ elif page == "📝 Order Desk":
         # Load synced customers
         try:
             cust_data = cust_sheet.get_all_records()
-            customer_list = [str(row['Customer Name']) for row in cust_data if 'Customer Name' in row]
+            # Clean up list and remove blanks
+            customer_list = sorted(list(set([str(row['Customer Name']).strip() for row in cust_data if 'Customer Name' in row and str(row['Customer Name']).strip()])))
         except:
             customer_list = []
             
         st.subheader("Create a New Order")
         
-        # SMART CUSTOMER DROPDOWN
+        # 🟢 UPGRADE: Blank by default using index=None!
         st.write("👤 **Customer Details**")
-        customer_dropdown = st.selectbox("Search Existing Customer", ["-- Type New Customer --"] + customer_list)
+        customer_dropdown = st.selectbox("Search Existing Customer:", customer_list, index=None, placeholder="Start typing to search...")
         
-        if customer_dropdown == "-- Type New Customer --":
-            customer_name = st.text_input("Enter a new customer name:", placeholder="e.g. Sharma Traders")
+        # Only show the "New Customer" box if they haven't selected an existing one
+        if not customer_dropdown:
+            customer_name = st.text_input("Or manually type a New Customer Name:", placeholder="e.g. Sharma Traders")
         else:
             customer_name = customer_dropdown
             
@@ -258,7 +261,6 @@ elif page == "📝 Order Desk":
                 order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 try:
-                    # WE NOW APPEND 7 COLUMNS (Including Notes at the end)
                     orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
                     st.success(f"✅ Order {order_id} placed! Refreshing...")
                     time.sleep(3)
@@ -269,7 +271,7 @@ elif page == "📝 Order Desk":
         if not orders_df.empty and 'Status' in orders_df.columns:
             pending_df = orders_df[orders_df['Status'] == 'Pending'].iloc[::-1]
             for _, row in pending_df.iterrows():
-                st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
                 if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}"):
                     cell = orders_sheet.find(row['Order ID'])
                     orders_sheet.update_cell(cell.row, 5, 'Completed')
@@ -281,7 +283,7 @@ elif page == "📝 Order Desk":
             completed_df = orders_df[orders_df['Status'] == 'Completed'].iloc[::-1]
             for _, row in completed_df.iterrows():
                 cb = row.get('Completed By', 'Unknown')
-                st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#28a745;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b></span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#28a745;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b></span></div>', unsafe_allow_html=True)
 
 # --- PAGE 3: AI RESTOCK ADVISOR ---
 elif page == "🤖 AI Restock Advisor":
@@ -294,16 +296,12 @@ elif page == "🤖 AI Restock Advisor":
         if st.button("✨ Generate Smart Restock Report", type="primary"):
             with st.spinner("Gemini is analyzing burn rates, lead times, and current stock..."):
                 try:
-                    # Gather Data for AI
                     live_stock = df.to_csv(index=False) if not df.empty else "No live stock data."
-                    
                     try: restock_times = pd.DataFrame(restock_sheet.get_all_records()).to_csv(index=False)
                     except: restock_times = "No restock lead times configured."
-                    
                     try: recent_sales = pd.DataFrame(sales_sheet.get_all_records()).to_csv(index=False)
                     except: recent_sales = "No recent sales data available."
                     
-                    # Highly tuned AI Prompt prioritizing recent sales
                     prompt = f"""
                     You are an expert AI Supply Chain Manager for Manglam Tradelink (Brand: Nyc), manufacturing bags with fabrics like Twill, 1000D PU, 1000D PVC, etc.
                     
@@ -324,7 +322,6 @@ elif page == "🤖 AI Restock Advisor":
                     CONFIGURED LEAD TIMES (Days to Restock):
                     {restock_times}
                     """
-                    
                     response = ai_model.generate_content(prompt)
                     st.markdown("### 📊 Predictive Restock Report")
                     st.write(response.text)
@@ -342,6 +339,3 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
-
-
-
