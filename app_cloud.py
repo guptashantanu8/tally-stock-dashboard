@@ -1,4 +1,4 @@
-import streamlit as st
+\import streamlit as st
 import pandas as pd
 import plotly.express as px
 import gspread
@@ -44,11 +44,16 @@ def get_gspread_client():
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         db = client.open(SHEET_NAME)
-        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers")
+        
+        # Safely attempt to load the new Audit Logs sheet
+        try: audit_sheet = db.worksheet("Audit Logs")
+        except: audit_sheet = None
+        
+        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet
     except Exception as e:
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
 
-orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet = get_gspread_client()
+orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -134,19 +139,15 @@ def generate_html_table(details_str):
     html += "</table>"
     return html
 
-# 🟢 NEW: PDF GENERATOR FUNCTION
 def create_order_pdf(row):
     pdf = FPDF()
     pdf.add_page()
-    
-    # Branded Header
     pdf.set_font("helvetica", "B", 20)
     pdf.cell(0, 10, "MANGLAM TRADELINK", ln=True, align="C")
     pdf.set_font("helvetica", "", 12)
     pdf.cell(0, 8, "NYC Brand - Official Order Receipt", ln=True, align="C")
     pdf.ln(10)
     
-    # Order Meta Data
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(40, 8, "Order ID:", 0, 0)
     pdf.set_font("helvetica", "", 12)
@@ -162,11 +163,6 @@ def create_order_pdf(row):
     pdf.set_font("helvetica", "", 12)
     pdf.cell(0, 8, str(row.get('Customer Name', '')), ln=True)
     
-    pdf.set_font("helvetica", "B", 12)
-    pdf.cell(40, 8, "Status:", 0, 0)
-    pdf.set_font("helvetica", "", 12)
-    pdf.cell(0, 8, str(row.get('Status', '')), ln=True)
-    
     notes = str(row.get('Notes', '')).strip()
     if notes and notes != 'None':
         pdf.set_font("helvetica", "B", 12)
@@ -174,23 +170,13 @@ def create_order_pdf(row):
         pdf.set_font("helvetica", "", 12)
         pdf.multi_cell(0, 8, notes)
         
-    cb = str(row.get('Completed By', '')).strip()
-    if cb and cb != 'None':
-        pdf.set_font("helvetica", "B", 12)
-        pdf.cell(40, 8, "Handled By:", 0, 0)
-        pdf.set_font("helvetica", "", 12)
-        pdf.cell(0, 8, cb, ln=True)
-        
     pdf.ln(10)
-    
-    # Items List
     pdf.set_font("helvetica", "B", 14)
     pdf.cell(0, 10, "Order Details & Quantities", ln=True)
     pdf.set_font("helvetica", "", 12)
     
     items = str(row.get('Order Details', '')).split(" | ")
     for item in items:
-        # Prevent any strange character crashes
         clean_item = item.encode('latin-1', 'replace').decode('latin-1')
         pdf.cell(0, 8, f"- {clean_item}", ln=True)
         
@@ -202,8 +188,11 @@ st.sidebar.markdown(f"**User:** {st.session_state.user_name}")
 st.sidebar.markdown(f"**Role:** {st.session_state.role}")
 st.sidebar.divider()
 
-pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🤖 AI Restock Advisor"]
+pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor"]
+
+# Admin only pages
 if st.session_state.role == "Admin":
+    pages.append("📊 Audit Report")
     pages.append("⚙️ Admin Dashboard")
 
 page = st.sidebar.radio("Navigate", pages)
@@ -323,8 +312,6 @@ elif page == "📝 Order Desk":
             pending_df = orders_df[orders_df['Status'] == 'Pending'].iloc[::-1]
             for _, row in pending_df.iterrows():
                 st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
-                
-                # 🟢 NEW: Side-by-Side Action Buttons
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}"):
@@ -342,12 +329,141 @@ elif page == "📝 Order Desk":
             for _, row in completed_df.iterrows():
                 cb = row.get('Completed By', 'Unknown')
                 st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#28a745;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b></span></div>', unsafe_allow_html=True)
-                
-                # 🟢 NEW: Download button on Completed cards too
                 pdf_data = create_order_pdf(row)
                 st.download_button("📄 Download Receipt", data=pdf_data, file_name=f"Receipt_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_comp_{row['Order ID']}")
 
-# --- PAGE 3: AI RESTOCK ADVISOR ---
+# --- PAGE 3: STOCK AUDIT (EMPLOYEE VIEW) ---
+elif page == "🔍 Stock Audit":
+    st.title("🔍 Physical Stock Audit")
+    st.write("Count scattered batches in the warehouse. Your entries will be summed automatically.")
+    
+    if not audit_sheet:
+        st.error("Audit Logs database not found. Please ask Admin to create the 'Audit Logs' sheet.")
+    else:
+        try:
+            audit_data = audit_sheet.get_all_records()
+            audit_df = pd.DataFrame(audit_data)
+            if not audit_df.empty and 'Status' in audit_df.columns:
+                active_audit = audit_df[audit_df['Status'] == 'Active']
+            else:
+                active_audit = pd.DataFrame(columns=['Timestamp', 'Item Name', 'Location', 'Quantity Found', 'Employee Name', 'Status'])
+        except:
+            active_audit = pd.DataFrame(columns=['Timestamp', 'Item Name', 'Location', 'Quantity Found', 'Employee Name', 'Status'])
+
+        item_list = df['Item'].tolist() if not df.empty else []
+        audit_item = st.selectbox("Search & Select Item to Count:", item_list, index=None, placeholder="Type item name...")
+        
+        if audit_item:
+            # Calculate what has been found so far
+            item_audits = active_audit[active_audit['Item Name'] == audit_item]
+            found_so_far = pd.to_numeric(item_audits['Quantity Found'], errors='coerce').sum() if not item_audits.empty else 0
+            
+            # Admins can see the system quantity, employees fly blind
+            st.markdown("### 📊 Live Audit Progress")
+            if st.session_state.role == "Admin":
+                system_qty = df[df['Item'] == audit_item]['Quantity'].iloc[0] if not df.empty else 0
+                variance = found_so_far - system_qty
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("System Expected", f"{system_qty:,.0f}")
+                c2.metric("Found So Far", f"{found_so_far:,.0f}")
+                c3.metric("Variance", f"{variance:,.0f}", delta_color="inverse")
+            else:
+                st.metric("📦 Found So Far (Your Counts)", f"{found_so_far:,.0f}")
+            
+            st.divider()
+            
+            # Log a new batch
+            st.subheader("➕ Log a Found Batch")
+            with st.form("audit_form", clear_on_submit=True):
+                loc = st.text_input("Location / Rack Details (Optional)", placeholder="e.g., Aisle 3, Top Shelf")
+                qty = st.number_input("Quantity Found in this specific location", min_value=0.0, step=1.0)
+                submit_batch = st.form_submit_button("💾 Save Batch", type="primary")
+                
+                if submit_batch:
+                    if qty <= 0:
+                        st.error("Quantity must be greater than 0.")
+                    else:
+                        timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                        try:
+                            audit_sheet.append_row([timestamp, audit_item, loc, qty, st.session_state.user_name, "Active"])
+                            st.success(f"Successfully logged {qty} for {audit_item}!")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to log audit: {e}")
+                            
+            if not item_audits.empty:
+                st.markdown("**Recent entries for this item:**")
+                st.dataframe(item_audits[['Location', 'Quantity Found', 'Employee Name', 'Timestamp']].iloc[::-1], hide_index=True)
+
+# --- PAGE 4: AUDIT REPORT (ADMIN ONLY) ---
+elif page == "📊 Audit Report":
+    st.title("📊 Physical Audit Variance Report")
+    st.write("Compare physical counts submitted by employees against live Tally stock.")
+    
+    if not audit_sheet:
+        st.error("Audit Logs database not found.")
+    else:
+        try:
+            audit_data = audit_sheet.get_all_records()
+            audit_df = pd.DataFrame(audit_data)
+        except:
+            audit_df = pd.DataFrame()
+            
+        if not audit_df.empty and 'Status' in audit_df.columns:
+            active_audit = audit_df[audit_df['Status'] == 'Active']
+            
+            if active_audit.empty:
+                st.info("No active audits running.")
+            else:
+                # Group all physical counts by Item
+                active_audit['Quantity Found'] = pd.to_numeric(active_audit['Quantity Found'], errors='coerce')
+                summary_df = active_audit.groupby('Item Name')['Quantity Found'].sum().reset_index()
+                
+                # Merge with Live Tally Stock
+                report_data = []
+                for _, row in summary_df.iterrows():
+                    item = row['Item Name']
+                    physical_qty = row['Quantity Found']
+                    system_qty = df[df['Item'] == item]['Quantity'].iloc[0] if not df[df['Item'] == item].empty else 0
+                    variance = physical_qty - system_qty
+                    report_data.append({
+                        "Item": item,
+                        "System Expected": system_qty,
+                        "Physical Count": physical_qty,
+                        "Variance": variance
+                    })
+                
+                report_df = pd.DataFrame(report_data)
+                
+                # Highlight variances
+                st.dataframe(
+                    report_df.style.map(lambda x: 'color: red;' if x < 0 else 'color: green;' if x > 0 else '', subset=['Variance']),
+                    use_container_width=True, hide_index=True
+                )
+                
+                st.divider()
+                st.subheader("Archive Current Audit")
+                st.warning("Once you have adjusted your stock in Tally using a Physical Stock Voucher, archive the audit here to clear the board for the next count.")
+                
+                if st.button("Archive & Reset Audit Board", type="primary"):
+                    try:
+                        # Find all rows with "Active" and change to "Closed"
+                        cell_list = audit_sheet.findall("Active")
+                        for cell in cell_list:
+                            # Verify it's in the Status column (Column F / 6)
+                            if cell.col == 6:
+                                audit_sheet.update_cell(cell.row, 6, "Closed")
+                        st.success("Audit Archived Successfully! The board is now clear.")
+                        time.sleep(2)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to archive: {e}")
+        else:
+            st.info("No audit logs found.")
+
+# --- PAGE 5: AI RESTOCK ADVISOR ---
 elif page == "🤖 AI Restock Advisor":
     st.title("🤖 Supply Chain Intelligence")
     st.markdown('<div class="ai-card"><h4>🧠 Gemini AI Predictive Analysis</h4><p>Click below to have Gemini analyze your live inventory against the <b>last 15 days of outward sales</b> and your lead times to generate a highly prioritized reordering report.</p></div>', unsafe_allow_html=True)
@@ -390,7 +506,7 @@ elif page == "🤖 AI Restock Advisor":
                 except Exception as e:
                     st.error(f"AI Generation Failed: {e}")
 
-# --- PAGE 4: ADMIN DASHBOARD ---
+# --- PAGE 6: ADMIN DASHBOARD ---
 elif page == "⚙️ Admin Dashboard":
     st.title("⚙️ User Management")
     with st.form("add_user_form"):
