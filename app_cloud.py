@@ -45,7 +45,6 @@ def get_gspread_client():
         client = gspread.authorize(creds)
         db = client.open(SHEET_NAME)
         
-        # Safely attempt to load the new Audit Logs sheet
         try: audit_sheet = db.worksheet("Audit Logs")
         except: audit_sheet = None
         
@@ -189,8 +188,6 @@ st.sidebar.markdown(f"**Role:** {st.session_state.role}")
 st.sidebar.divider()
 
 pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor"]
-
-# Admin only pages
 if st.session_state.role == "Admin":
     pages.append("📊 Audit Report")
     pages.append("⚙️ Admin Dashboard")
@@ -335,7 +332,10 @@ elif page == "📝 Order Desk":
 # --- PAGE 3: STOCK AUDIT (EMPLOYEE VIEW) ---
 elif page == "🔍 Stock Audit":
     st.title("🔍 Physical Stock Audit")
-    st.write("Count scattered batches in the warehouse. Your entries will be summed automatically.")
+    
+    # 🟢 NEW: Option to view System Quantities before starting
+    with st.expander("👀 View Current System Quantities (Live Tally Stock)"):
+        st.dataframe(df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Group", "Quantity"], ascending=[True, False]), use_container_width=True, hide_index=True)
     
     if not audit_sheet:
         st.error("Audit Logs database not found. Please ask Admin to create the 'Audit Logs' sheet.")
@@ -350,16 +350,25 @@ elif page == "🔍 Stock Audit":
         except:
             active_audit = pd.DataFrame(columns=['Timestamp', 'Item Name', 'Location', 'Quantity Found', 'Employee Name', 'Status'])
 
-        item_list = df['Item'].tolist() if not df.empty else []
-        audit_item = st.selectbox("Search & Select Item to Count:", item_list, index=None, placeholder="Type item name...")
+        # 🟢 NEW: Calculate Pending/Remaining Items dynamically
+        all_items = df['Item'].dropna().unique().tolist()
+        audited_items = active_audit['Item Name'].dropna().unique().tolist() if not active_audit.empty else []
+        remaining_items = [i for i in all_items if i not in audited_items]
+        
+        st.metric("📊 Audit Progress", f"{len(audited_items)} / {len(all_items)} Items Audited")
+        st.progress(len(audited_items) / len(all_items) if len(all_items) > 0 else 0.0)
+        
+        st.divider()
+        st.write("Count scattered batches in the warehouse. Your entries will be summed automatically.")
+
+        # Let them select from ALL items, but highlight remaining
+        audit_item = st.selectbox("Search & Select Item to Count:", all_items, index=None, placeholder="Type item name...")
         
         if audit_item:
-            # Calculate what has been found so far
             item_audits = active_audit[active_audit['Item Name'] == audit_item]
             found_so_far = pd.to_numeric(item_audits['Quantity Found'], errors='coerce').sum() if not item_audits.empty else 0
             
-            # Admins can see the system quantity, employees fly blind
-            st.markdown("### 📊 Live Audit Progress")
+            st.markdown("### 📊 Live Item Progress")
             if st.session_state.role == "Admin":
                 system_qty = df[df['Item'] == audit_item]['Quantity'].iloc[0] if not df.empty else 0
                 variance = found_so_far - system_qty
@@ -373,7 +382,6 @@ elif page == "🔍 Stock Audit":
             
             st.divider()
             
-            # Log a new batch
             st.subheader("➕ Log a Found Batch")
             with st.form("audit_form", clear_on_submit=True):
                 loc = st.text_input("Location / Rack Details (Optional)", placeholder="e.g., Aisle 3, Top Shelf")
@@ -381,8 +389,8 @@ elif page == "🔍 Stock Audit":
                 submit_batch = st.form_submit_button("💾 Save Batch", type="primary")
                 
                 if submit_batch:
-                    if qty <= 0:
-                        st.error("Quantity must be greater than 0.")
+                    if qty < 0:
+                        st.error("Quantity cannot be negative.")
                     else:
                         timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
                         try:
@@ -396,6 +404,15 @@ elif page == "🔍 Stock Audit":
             if not item_audits.empty:
                 st.markdown("**Recent entries for this item:**")
                 st.dataframe(item_audits[['Location', 'Quantity Found', 'Employee Name', 'Timestamp']].iloc[::-1], hide_index=True)
+
+        # 🟢 NEW: Bottom List of Remaining Items
+        st.divider()
+        st.subheader("📋 Remaining Items to Count")
+        if remaining_items:
+            rem_df = df[df['Item'].isin(remaining_items)][['Group', 'Item']].sort_values(["Group", "Item"])
+            st.dataframe(rem_df, use_container_width=True, hide_index=True)
+        else:
+            st.success("🎉 Incredible job! All inventory items have been physically audited.")
 
 # --- PAGE 4: AUDIT REPORT (ADMIN ONLY) ---
 elif page == "📊 Audit Report":
@@ -417,11 +434,9 @@ elif page == "📊 Audit Report":
             if active_audit.empty:
                 st.info("No active audits running.")
             else:
-                # Group all physical counts by Item
                 active_audit['Quantity Found'] = pd.to_numeric(active_audit['Quantity Found'], errors='coerce')
                 summary_df = active_audit.groupby('Item Name')['Quantity Found'].sum().reset_index()
                 
-                # Merge with Live Tally Stock
                 report_data = []
                 for _, row in summary_df.iterrows():
                     item = row['Item Name']
@@ -436,8 +451,6 @@ elif page == "📊 Audit Report":
                     })
                 
                 report_df = pd.DataFrame(report_data)
-                
-                # Highlight variances
                 st.dataframe(
                     report_df.style.map(lambda x: 'color: red;' if x < 0 else 'color: green;' if x > 0 else '', subset=['Variance']),
                     use_container_width=True, hide_index=True
@@ -445,14 +458,12 @@ elif page == "📊 Audit Report":
                 
                 st.divider()
                 st.subheader("Archive Current Audit")
-                st.warning("Once you have adjusted your stock in Tally using a Physical Stock Voucher, archive the audit here to clear the board for the next count.")
+                st.warning("Archiving the audit board resets all items back to 'Pending' for the next full warehouse count.")
                 
                 if st.button("Archive & Reset Audit Board", type="primary"):
                     try:
-                        # Find all rows with "Active" and change to "Closed"
                         cell_list = audit_sheet.findall("Active")
                         for cell in cell_list:
-                            # Verify it's in the Status column (Column F / 6)
                             if cell.col == 6:
                                 audit_sheet.update_cell(cell.row, 6, "Closed")
                         st.success("Audit Archived Successfully! The board is now clear.")
@@ -517,4 +528,3 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
-
