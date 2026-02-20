@@ -9,6 +9,7 @@ from datetime import datetime
 import pytz
 import uuid
 import google.generativeai as genai
+from fpdf import FPDF
 
 # --- CONFIGURATION ---
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSGCN0vX5T-HTyvx1Bkbm8Jm8QlQrZRgYj_0_E2kKX7UKQvE12oVQ0s-QZqkct7Ev6c0sp3Bqx82JQR/pub?output=csv" # Put your CSV link here!
@@ -102,7 +103,7 @@ if not st.session_state.logged_in:
     st.stop() 
 
 # ==========================================
-# MAIN APP
+# MAIN APP & HELPER FUNCTIONS
 # ==========================================
 @st.cache_data(ttl=60)
 def load_data():
@@ -133,6 +134,68 @@ def generate_html_table(details_str):
     html += "</table>"
     return html
 
+# 🟢 NEW: PDF GENERATOR FUNCTION
+def create_order_pdf(row):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Branded Header
+    pdf.set_font("helvetica", "B", 20)
+    pdf.cell(0, 10, "MANGLAM TRADELINK", ln=True, align="C")
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 8, "NYC Brand - Official Order Receipt", ln=True, align="C")
+    pdf.ln(10)
+    
+    # Order Meta Data
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(40, 8, "Order ID:", 0, 0)
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 8, str(row.get('Order ID', '')), ln=True)
+    
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(40, 8, "Date (IST):", 0, 0)
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 8, str(row.get('Date', '')), ln=True)
+    
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(40, 8, "Customer:", 0, 0)
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 8, str(row.get('Customer Name', '')), ln=True)
+    
+    pdf.set_font("helvetica", "B", 12)
+    pdf.cell(40, 8, "Status:", 0, 0)
+    pdf.set_font("helvetica", "", 12)
+    pdf.cell(0, 8, str(row.get('Status', '')), ln=True)
+    
+    notes = str(row.get('Notes', '')).strip()
+    if notes and notes != 'None':
+        pdf.set_font("helvetica", "B", 12)
+        pdf.cell(40, 8, "Notes:", 0, 0)
+        pdf.set_font("helvetica", "", 12)
+        pdf.multi_cell(0, 8, notes)
+        
+    cb = str(row.get('Completed By', '')).strip()
+    if cb and cb != 'None':
+        pdf.set_font("helvetica", "B", 12)
+        pdf.cell(40, 8, "Handled By:", 0, 0)
+        pdf.set_font("helvetica", "", 12)
+        pdf.cell(0, 8, cb, ln=True)
+        
+    pdf.ln(10)
+    
+    # Items List
+    pdf.set_font("helvetica", "B", 14)
+    pdf.cell(0, 10, "Order Details & Quantities", ln=True)
+    pdf.set_font("helvetica", "", 12)
+    
+    items = str(row.get('Order Details', '')).split(" | ")
+    for item in items:
+        # Prevent any strange character crashes
+        clean_item = item.encode('latin-1', 'replace').decode('latin-1')
+        pdf.cell(0, 8, f"- {clean_item}", ln=True)
+        
+    return bytes(pdf.output())
+
 # --- APP NAVIGATION ---
 st.sidebar.title(f"🏢 Nyc Brand")
 st.sidebar.markdown(f"**User:** {st.session_state.user_name}")
@@ -158,17 +221,14 @@ if page == "📦 Inventory Dashboard":
     st.title("📦 Live Physical Inventory")
     if not df.empty:
         col_search, col_filter = st.columns(2)
-        with col_search:
-            search_text = st.text_input("🔍 Search Item...", "")
+        with col_search: search_text = st.text_input("🔍 Search Item...", "")
         with col_filter:
             groups = ["All Groups"] + df['Group'].dropna().unique().tolist()
             selected_group = st.selectbox("📂 Filter Group:", groups)
 
         filtered_df = df.copy()
-        if search_text:
-            filtered_df = filtered_df[filtered_df['Item'].str.contains(search_text, case=False, na=False)]
-        if selected_group != "All Groups":
-            filtered_df = filtered_df[filtered_df['Group'] == selected_group]
+        if search_text: filtered_df = filtered_df[filtered_df['Item'].str.contains(search_text, case=False, na=False)]
+        if selected_group != "All Groups": filtered_df = filtered_df[filtered_df['Group'] == selected_group]
 
         total_qty = filtered_df['Quantity'].sum()
         m1, m2 = st.columns(2)
@@ -186,7 +246,6 @@ if page == "📦 Inventory Dashboard":
                 st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
-            # 🟢 UPGRADE: Sorted by Group (A-Z) first, then by Quantity highest to lowest!
             sorted_df = filtered_df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Group", "Quantity"], ascending=[True, False])
             st.dataframe(sorted_df, use_container_width=True, hide_index=True)
 
@@ -202,25 +261,17 @@ elif page == "📝 Order Desk":
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
     with order_tab1:
-        # Load synced customers
         try:
             cust_data = cust_sheet.get_all_records()
-            # Clean up list and remove blanks
             customer_list = sorted(list(set([str(row['Customer Name']).strip() for row in cust_data if 'Customer Name' in row and str(row['Customer Name']).strip()])))
-        except:
-            customer_list = []
+        except: customer_list = []
             
         st.subheader("Create a New Order")
-        
-        # 🟢 UPGRADE: Blank by default using index=None!
         st.write("👤 **Customer Details**")
         customer_dropdown = st.selectbox("Search Existing Customer:", customer_list, index=None, placeholder="Start typing to search...")
         
-        # Only show the "New Customer" box if they haven't selected an existing one
-        if not customer_dropdown:
-            customer_name = st.text_input("Or manually type a New Customer Name:", placeholder="e.g. Sharma Traders")
-        else:
-            customer_name = customer_dropdown
+        if not customer_dropdown: customer_name = st.text_input("Or manually type a New Customer Name:", placeholder="e.g. Sharma Traders")
+        else: customer_name = customer_dropdown
             
         order_notes = st.text_input("📝 Order Notes (Optional)", placeholder="e.g. Dispatch via VRL Logistics, Urgent...")
         
@@ -272,11 +323,18 @@ elif page == "📝 Order Desk":
             pending_df = orders_df[orders_df['Status'] == 'Pending'].iloc[::-1]
             for _, row in pending_df.iterrows():
                 st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
-                if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}"):
-                    cell = orders_sheet.find(row['Order ID'])
-                    orders_sheet.update_cell(cell.row, 5, 'Completed')
-                    orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
-                    st.rerun()
+                
+                # 🟢 NEW: Side-by-Side Action Buttons
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}"):
+                        cell = orders_sheet.find(row['Order ID'])
+                        orders_sheet.update_cell(cell.row, 5, 'Completed')
+                        orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
+                        st.rerun()
+                with c2:
+                    pdf_data = create_order_pdf(row)
+                    st.download_button("📄 Share PDF", data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}")
 
     with order_tab3:
         if not orders_df.empty and 'Status' in orders_df.columns:
@@ -284,6 +342,10 @@ elif page == "📝 Order Desk":
             for _, row in completed_df.iterrows():
                 cb = row.get('Completed By', 'Unknown')
                 st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#28a745;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b></span></div>', unsafe_allow_html=True)
+                
+                # 🟢 NEW: Download button on Completed cards too
+                pdf_data = create_order_pdf(row)
+                st.download_button("📄 Download Receipt", data=pdf_data, file_name=f"Receipt_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_comp_{row['Order ID']}")
 
 # --- PAGE 3: AI RESTOCK ADVISOR ---
 elif page == "🤖 AI Restock Advisor":
