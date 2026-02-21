@@ -365,13 +365,13 @@ elif page == "📝 Order Desk":
     with order_tab2:
         if not orders_df.empty and 'Status' in orders_df.columns:
             pending_df = orders_df[orders_df['Status'] == 'Pending'].iloc[::-1]
-            for _, row in pending_df.iterrows():
+            for idx, row in pending_df.iterrows():
                 st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
                 
                 # Top Action Buttons
                 c1, c2 = st.columns([1, 1])
                 with c1:
-                    if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}"):
+                    if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}_{idx}"):
                         try:
                             cell = orders_sheet.find(row['Order ID'])
                             orders_sheet.update_cell(cell.row, 5, 'Completed')
@@ -393,45 +393,41 @@ elif page == "📝 Order Desk":
                         except Exception as e: st.error(f"Error: {e}")
                 with c2:
                     pdf_data = create_order_pdf(row)
-                    st.download_button("📄 Share PDF", data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}")
+                    st.download_button("📄 Share PDF", data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}_{idx}")
 
-                # 🟢 SMART EDIT MENU
+                # 🟢 SMART EDIT MENU (Patched Keys)
                 with st.expander("✏️ Modify or Delete Order"):
-                    mod_cust = st.text_input("Customer Name", str(row['Customer Name']), key=f"mcust_{row['Order ID']}")
+                    mod_cust = st.text_input("Customer Name", str(row['Customer Name']), key=f"mcust_{row['Order ID']}_{idx}")
                     
-                    # 1. Parse existing order details securely
                     current_items = {}
                     for chunk in str(row['Order Details']).split(" | "):
                         if ": " in chunk:
                             k, v = chunk.split(": ", 1)
                             current_items[k.strip()] = v.strip()
                             
-                    # 2. Get the master list of all items, ensuring existing ones are included
                     all_items = df['Item'].dropna().unique().tolist() if not df.empty else []
                     for k in current_items.keys():
-                        if k not in all_items:
-                            all_items.append(k)
+                        if k not in all_items: all_items.append(k)
                             
                     st.write("🛒 **Modify Items & Quantities**")
                     mod_selected_items = st.multiselect(
                         "Add or Remove Items (Exact Names):",
                         options=all_items,
                         default=list(current_items.keys()),
-                        key=f"mitems_{row['Order ID']}"
+                        key=f"mitems_{row['Order ID']}_{idx}"
                     )
                     
-                    # 3. Generate dynamic quantity boxes for chosen items
                     new_order_dict = {}
                     for item in mod_selected_items:
                         default_qty = current_items.get(item, "1.0 units")
-                        new_qty = st.text_input(f"Quantity/Details for [{item}]", value=default_qty, key=f"mqty_{row['Order ID']}_{item}")
+                        new_qty = st.text_input(f"Quantity/Details for [{item}]", value=default_qty, key=f"mqty_{row['Order ID']}_{idx}_{item}")
                         new_order_dict[item] = new_qty
                         
-                    mod_notes = st.text_input("Notes", str(row.get('Notes', '')), key=f"mnot_{row['Order ID']}")
+                    mod_notes = st.text_input("Notes", str(row.get('Notes', '')), key=f"mnot_{row['Order ID']}_{idx}")
                     
                     ec1, ec2 = st.columns(2)
                     with ec1:
-                        if st.button("💾 Save Changes", type="primary", key=f"msave_{row['Order ID']}"):
+                        if st.button("💾 Save Changes", type="primary", key=f"msave_{row['Order ID']}_{idx}"):
                             reconstructed_details = " | ".join([f"{k}: {v}" for k, v in new_order_dict.items()])
                             if not reconstructed_details:
                                 st.error("You must have at least one item in the order.")
@@ -446,7 +442,7 @@ elif page == "📝 Order Desk":
                                     st.rerun()
                                 except Exception as e: st.error(f"Failed to update: {e}")
                     with ec2:
-                        if st.button("❌ Delete Order", key=f"mdel_{row['Order ID']}"):
+                        if st.button("❌ Delete Order", key=f"mdel_{row['Order ID']}_{idx}"):
                             try:
                                 cell = orders_sheet.find(row['Order ID'])
                                 orders_sheet.delete_rows(cell.row)
@@ -458,18 +454,17 @@ elif page == "📝 Order Desk":
     with order_tab3:
         if not orders_df.empty and 'Status' in orders_df.columns:
             completed_df = orders_df[orders_df['Status'] == 'Completed'].iloc[::-1]
-            for _, row in completed_df.iterrows():
+            for idx, row in completed_df.iterrows():
                 cb = row.get('Completed By', 'Unknown')
                 st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#28a745;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b></span></div>', unsafe_allow_html=True)
                 
-                # 🟢 NEW: Admin-Only Delete Button for Completed Orders
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     pdf_data = create_order_pdf(row)
-                    st.download_button("📄 Download Receipt", data=pdf_data, file_name=f"Receipt_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_comp_{row['Order ID']}")
+                    st.download_button("📄 Download Receipt", data=pdf_data, file_name=f"Receipt_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_comp_{row['Order ID']}_{idx}")
                 with c2:
                     if st.session_state.role == "Admin":
-                        if st.button("🗑️ Delete Record", key=f"del_comp_{row['Order ID']}"):
+                        if st.button("🗑️ Delete Record", key=f"del_comp_{row['Order ID']}_{idx}"):
                             try:
                                 cell = orders_sheet.find(row['Order ID'])
                                 orders_sheet.delete_rows(cell.row)
@@ -677,6 +672,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
