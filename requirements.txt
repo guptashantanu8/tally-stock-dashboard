@@ -8,4 +8,5 @@ google-generativeai
 fpdf2
 urllib3
 requests
+extra-streamlit-components
 
