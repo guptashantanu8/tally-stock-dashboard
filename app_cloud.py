@@ -50,11 +50,14 @@ def get_gspread_client():
         try: audit_sheet = db.worksheet("Audit Logs")
         except: audit_sheet = None
         
-        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet
+        try: master_sheet = db.worksheet("Master Items")
+     except: master_sheet = None
+
+     return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet
     except Exception as e:
         return None, None, None, None, None, None, None
 
-orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet = get_gspread_client()
+orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -265,17 +268,35 @@ elif page == "📝 Order Desk":
         
         st.divider()
         st.write("🛒 **Select Items to Add to Cart**")
-        item_list = df['Item'].tolist() if not df.empty else []
+        
+        # 🟢 NEW: Pull from the Master List instead of Live Stock
+        try:
+            master_data = master_sheet.get_all_records()
+            item_list = sorted([str(row['Item Name']).strip() for row in master_data if 'Item Name' in row])
+        except:
+            # Fallback if Master List fails
+            item_list = df['Item'].tolist() if not df.empty else []
+            
         selected_items = st.multiselect("Search and choose items...", item_list)
         order_details_dict = {}
         
         if selected_items:
             for item in selected_items:
+                # Check live stock for this item
                 item_data = df[df['Item'] == item]
-                avail_qty = item_data['Quantity'].iloc[0] if not item_data.empty else 0
-                unit = item_data['Unit'].iloc[0] if not item_data.empty else "units"
                 
-                st.markdown(f'<div class="item-banner"><h4 style="margin:0; color: #333;">{item}</h4><span style="color: #4CAF50; font-weight: bold;">📦 Stock: {avail_qty:,.0f} {unit}</span></div>', unsafe_allow_html=True)
+                # 🟢 NEW: Handle Zero Stock visually
+                if not item_data.empty:
+                    avail_qty = item_data['Quantity'].iloc[0]
+                    unit = item_data['Unit'].iloc[0]
+                    stock_color = "#4CAF50" # Green for in-stock
+                else:
+                    avail_qty = 0
+                    unit = "units"
+                    stock_color = "#dc3545" # Red for out-of-stock
+                
+                st.markdown(f'<div class="item-banner"><h4 style="margin:0; color: #333;">{item}</h4><span style="color: {stock_color}; font-weight: bold;">📦 Stock: {avail_qty:,.0f} {unit}</span></div>', unsafe_allow_html=True)
+                
                 st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
                 c1, c2, c3 = st.columns(3)
                 with c1: qty = st.number_input(f"Order Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_{item}")
@@ -576,6 +597,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
