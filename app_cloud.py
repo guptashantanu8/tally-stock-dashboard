@@ -259,46 +259,46 @@ elif page == "📝 Order Desk":
             
         st.subheader("Create a New Order")
         st.write("👤 **Customer Details**")
-        customer_dropdown = st.selectbox("Search Existing Customer:", customer_list, index=None, placeholder="Start typing to search...")
         
-        if not customer_dropdown: customer_name = st.text_input("Or manually type a New Customer Name:", placeholder="e.g. Sharma Traders")
-        else: customer_name = customer_dropdown
+        # 🟢 Added 'key' to inputs so we can clear them later
+        customer_dropdown = st.selectbox("Search Existing Customer:", customer_list, index=None, placeholder="Start typing to search...", key="order_cust_drop")
+        
+        if not customer_dropdown: 
+            customer_name = st.text_input("Or manually type a New Customer Name:", placeholder="e.g. Sharma Traders", key="order_cust_text")
+        else: 
+            customer_name = customer_dropdown
             
-        order_notes = st.text_input("📝 Order Notes (Optional)", placeholder="e.g. Dispatch via VRL Logistics, Urgent...")
+        order_notes = st.text_input("📝 Order Notes (Optional)", placeholder="e.g. Dispatch via VRL Logistics, Urgent...", key="order_notes")
         
         st.divider()
         st.write("🛒 **Select Items to Add to Cart**")
         
-        # 🟢 NEW: Pull from the Master List instead of Live Stock
         try:
             master_data = master_sheet.get_all_records()
             item_list = sorted([str(row['Item Name']).strip() for row in master_data if 'Item Name' in row])
         except:
-            # Fallback if Master List fails
             item_list = df['Item'].tolist() if not df.empty else []
             
-        selected_items = st.multiselect("Search and choose items...", item_list)
+        # 🟢 Added 'key' here too
+        selected_items = st.multiselect("Search and choose items...", item_list, key="order_items")
         order_details_dict = {}
         
         if selected_items:
             for item in selected_items:
-                # Check live stock for this item
                 item_data = df[df['Item'] == item]
-                
-                # 🟢 NEW: Handle Zero Stock visually
                 if not item_data.empty:
                     avail_qty = item_data['Quantity'].iloc[0]
                     unit = item_data['Unit'].iloc[0]
-                    stock_color = "#4CAF50" # Green for in-stock
+                    stock_color = "#4CAF50"
                 else:
                     avail_qty = 0
                     unit = "units"
-                    stock_color = "#dc3545" # Red for out-of-stock
+                    stock_color = "#dc3545"
                 
                 st.markdown(f'<div class="item-banner"><h4 style="margin:0; color: #333;">{item}</h4><span style="color: {stock_color}; font-weight: bold;">📦 Stock: {avail_qty:,.0f} {unit}</span></div>', unsafe_allow_html=True)
-                
                 st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
                 c1, c2, c3 = st.columns(3)
+                # The quantities already had keys (p_item, a_item, u_item)
                 with c1: qty = st.number_input(f"Order Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_{item}")
                 with c2: alt_qty = st.number_input("Alt Qty", min_value=0.0, value=0.0, step=1.0, key=f"a_{item}")
                 with c3: alt_unit = st.text_input("Alt Unit", key=f"u_{item}")
@@ -320,55 +320,44 @@ elif page == "📝 Order Desk":
                 
                 order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
-                
                 try:
                     orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
                     st.success(f"✅ Order {order_id} placed! Sending alert...")
                     
-                    # 🟢 BULLETPROOF TELEGRAM ALERT 🟢
-                    # 🟢 POLISHED TELEGRAM ALERT 🟢
                     try:
                         tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                         tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
-                        
                         if tg_token and tg_chat_id:
-                            # 1. Build the items into a clean text-based table
                             items_array = details_str.split(" | ")
                             table_text = "━━━━━━━━━━━━━━━━━━━━\n"
-                            for item in items_array:
-                                if ": " in item:
-                                    name, qty = item.split(": ", 1)
-                                    table_text += f"▪️ {name} ➔ {qty}\n"
+                            for i in items_array:
+                                if ": " in i:
+                                    name, q = i.split(": ", 1)
+                                    table_text += f"▪️ {name} ➔ {q}\n"
                                 else:
-                                    table_text += f"▪️ {item}\n"
+                                    table_text += f"▪️ {i}\n"
                             table_text += "━━━━━━━━━━━━━━━━━━━━\n"
                             
-                            # 2. Build the final message dynamically
-                            alert_text = "NEW ORDER ALERT\n\n"
-                            alert_text += f"🆔 {order_id}\n"
-                            alert_text += f"👤 {customer_name}\n\n"
-                            alert_text += f"{table_text}"
-                            
-                            # 3. Only add the Notes line if notes actually exist
-                            if order_notes and str(order_notes).strip():
-                                alert_text += f"\n📝 Notes: {order_notes}\n"
-                                
+                            alert_text = "🚨 NEW ORDER ALERT 🚨\n\n"
+                            alert_text += f"🆔 {order_id}\n👤 {customer_name}\n\n{table_text}"
+                            if order_notes and str(order_notes).strip(): alert_text += f"\n📝 Notes: {order_notes}\n"
                             alert_text += f"\n✅ Placed By: {st.session_state.user_name}"
                             
                             encoded_text = urllib.parse.quote(alert_text)
-                            
-                            # Send the message
-                            url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}"
-                            resp = requests.get(url)
-                            
-                            if resp.status_code == 200:
-                                st.success("✈️ Telegram Alert Sent!")
-                            else:
-                                st.warning(f"Telegram failed. Error: {resp.text}")
+                            requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}")
                     except Exception as tg_e:
-                        st.warning(f"Telegram Alert Error: {tg_e}")
+                        pass
                     
-                    time.sleep(3)
+                    # 🟢 NEW: CLEAR THE FORM MEMORY AFTER SUCCESS 🟢
+                    keys_to_clear = ["order_cust_drop", "order_cust_text", "order_notes", "order_items"]
+                    for item in selected_items:
+                        keys_to_clear.extend([f"p_{item}", f"a_{item}", f"u_{item}"])
+                    
+                    for key in keys_to_clear:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                            
+                    time.sleep(1.5)
                     st.rerun()
                 except Exception as e: 
                     st.error(f"Error saving order: {e}")
@@ -406,24 +395,56 @@ elif page == "📝 Order Desk":
                     pdf_data = create_order_pdf(row)
                     st.download_button("📄 Share PDF", data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}")
 
-                # 🟢 NEW: Edit & Delete Menu for Pending Orders
+                # 🟢 SMART EDIT MENU
                 with st.expander("✏️ Modify or Delete Order"):
-                    mod_cust = st.text_input("Customer Name", row['Customer Name'], key=f"mcust_{row['Order ID']}")
-                    mod_det = st.text_area("Order Details (Format -> Item: Qty unit | Item: Qty unit)", row['Order Details'], key=f"mdet_{row['Order ID']}")
+                    mod_cust = st.text_input("Customer Name", str(row['Customer Name']), key=f"mcust_{row['Order ID']}")
+                    
+                    # 1. Parse existing order details securely
+                    current_items = {}
+                    for chunk in str(row['Order Details']).split(" | "):
+                        if ": " in chunk:
+                            k, v = chunk.split(": ", 1)
+                            current_items[k.strip()] = v.strip()
+                            
+                    # 2. Get the master list of all items, ensuring existing ones are included
+                    all_items = df['Item'].dropna().unique().tolist() if not df.empty else []
+                    for k in current_items.keys():
+                        if k not in all_items:
+                            all_items.append(k)
+                            
+                    st.write("🛒 **Modify Items & Quantities**")
+                    mod_selected_items = st.multiselect(
+                        "Add or Remove Items (Exact Names):",
+                        options=all_items,
+                        default=list(current_items.keys()),
+                        key=f"mitems_{row['Order ID']}"
+                    )
+                    
+                    # 3. Generate dynamic quantity boxes for chosen items
+                    new_order_dict = {}
+                    for item in mod_selected_items:
+                        default_qty = current_items.get(item, "1.0 units")
+                        new_qty = st.text_input(f"Quantity/Details for [{item}]", value=default_qty, key=f"mqty_{row['Order ID']}_{item}")
+                        new_order_dict[item] = new_qty
+                        
                     mod_notes = st.text_input("Notes", str(row.get('Notes', '')), key=f"mnot_{row['Order ID']}")
                     
                     ec1, ec2 = st.columns(2)
                     with ec1:
                         if st.button("💾 Save Changes", type="primary", key=f"msave_{row['Order ID']}"):
-                            try:
-                                cell = orders_sheet.find(row['Order ID'])
-                                orders_sheet.update_cell(cell.row, 3, mod_cust)
-                                orders_sheet.update_cell(cell.row, 4, mod_det)
-                                orders_sheet.update_cell(cell.row, 7, mod_notes)
-                                st.success("Order Updated!")
-                                time.sleep(1)
-                                st.rerun()
-                            except Exception as e: st.error(f"Failed to update: {e}")
+                            reconstructed_details = " | ".join([f"{k}: {v}" for k, v in new_order_dict.items()])
+                            if not reconstructed_details:
+                                st.error("You must have at least one item in the order.")
+                            else:
+                                try:
+                                    cell = orders_sheet.find(row['Order ID'])
+                                    orders_sheet.update_cell(cell.row, 3, mod_cust)
+                                    orders_sheet.update_cell(cell.row, 4, reconstructed_details)
+                                    orders_sheet.update_cell(cell.row, 7, mod_notes)
+                                    st.success("Order Updated!")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except Exception as e: st.error(f"Failed to update: {e}")
                     with ec2:
                         if st.button("❌ Delete Order", key=f"mdel_{row['Order ID']}"):
                             try:
@@ -656,6 +677,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
