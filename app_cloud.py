@@ -381,10 +381,35 @@ elif page == "📝 Order Desk":
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}"):
-                        cell = orders_sheet.find(row['Order ID'])
-                        orders_sheet.update_cell(cell.row, 5, 'Completed')
-                        orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
-                        st.rerun()
+                        try:
+                            # 1. Update the Database
+                            cell = orders_sheet.find(row['Order ID'])
+                            orders_sheet.update_cell(cell.row, 5, 'Completed')
+                            orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
+                            
+                            # 2. 🟢 NEW: TELEGRAM COMPLETION ALERT 🟢
+                            try:
+                                tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
+                                tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+                                
+                                if tg_token and tg_chat_id:
+                                    # Format the Completion Receipt
+                                    comp_text = f"✅ *ORDER COMPLETED* ✅\n\n"
+                                    comp_text += f"🆔 {row['Order ID']}\n"
+                                    comp_text += f"👤 {row['Customer Name']}\n"
+                                    comp_text += f"👷 Completed By: {st.session_state.user_name}"
+                                    
+                                    encoded_comp = urllib.parse.quote(comp_text)
+                                    url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}"
+                                    requests.get(url)
+                            except Exception as e:
+                                pass # Silently fail if Telegram glitches, so the app doesn't crash
+                                
+                            st.success(f"Order Completed & Alert Sent!")
+                            time.sleep(2)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
                 with c2:
                     pdf_data = create_order_pdf(row)
                     st.download_button("📄 Share PDF", data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}")
@@ -597,6 +622,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
