@@ -378,41 +378,61 @@ elif page == "📝 Order Desk":
             pending_df = orders_df[orders_df['Status'] == 'Pending'].iloc[::-1]
             for _, row in pending_df.iterrows():
                 st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
+                
+                # Top Action Buttons
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}"):
                         try:
-                            # 1. Update the Database
                             cell = orders_sheet.find(row['Order ID'])
                             orders_sheet.update_cell(cell.row, 5, 'Completed')
                             orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
                             
-                            # 2. 🟢 NEW: TELEGRAM COMPLETION ALERT 🟢
+                            # Telegram Completion Alert
                             try:
                                 tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                                 tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
-                                
                                 if tg_token and tg_chat_id:
-                                    # Format the Completion Receipt
-                                    comp_text = f"✅ *ORDER COMPLETED* ✅\n\n"
-                                    comp_text += f"🆔 {row['Order ID']}\n"
-                                    comp_text += f"👤 {row['Customer Name']}\n"
-                                    comp_text += f"👷 Completed By: {st.session_state.user_name}"
-                                    
+                                    comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Completed By: {st.session_state.user_name}"
                                     encoded_comp = urllib.parse.quote(comp_text)
-                                    url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}"
-                                    requests.get(url)
-                            except Exception as e:
-                                pass # Silently fail if Telegram glitches, so the app doesn't crash
-                                
-                            st.success(f"Order Completed & Alert Sent!")
-                            time.sleep(2)
+                                    requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
+                            except: pass
+                            
+                            st.success(f"Order Completed!")
+                            time.sleep(1)
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
+                        except Exception as e: st.error(f"Error: {e}")
                 with c2:
                     pdf_data = create_order_pdf(row)
                     st.download_button("📄 Share PDF", data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}")
+
+                # 🟢 NEW: Edit & Delete Menu for Pending Orders
+                with st.expander("✏️ Modify or Delete Order"):
+                    mod_cust = st.text_input("Customer Name", row['Customer Name'], key=f"mcust_{row['Order ID']}")
+                    mod_det = st.text_area("Order Details (Format -> Item: Qty unit | Item: Qty unit)", row['Order Details'], key=f"mdet_{row['Order ID']}")
+                    mod_notes = st.text_input("Notes", str(row.get('Notes', '')), key=f"mnot_{row['Order ID']}")
+                    
+                    ec1, ec2 = st.columns(2)
+                    with ec1:
+                        if st.button("💾 Save Changes", type="primary", key=f"msave_{row['Order ID']}"):
+                            try:
+                                cell = orders_sheet.find(row['Order ID'])
+                                orders_sheet.update_cell(cell.row, 3, mod_cust)
+                                orders_sheet.update_cell(cell.row, 4, mod_det)
+                                orders_sheet.update_cell(cell.row, 7, mod_notes)
+                                st.success("Order Updated!")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e: st.error(f"Failed to update: {e}")
+                    with ec2:
+                        if st.button("❌ Delete Order", key=f"mdel_{row['Order ID']}"):
+                            try:
+                                cell = orders_sheet.find(row['Order ID'])
+                                orders_sheet.delete_rows(cell.row)
+                                st.warning("Order Deleted!")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e: st.error(f"Failed to delete: {e}")
 
     with order_tab3:
         if not orders_df.empty and 'Status' in orders_df.columns:
@@ -420,8 +440,22 @@ elif page == "📝 Order Desk":
             for _, row in completed_df.iterrows():
                 cb = row.get('Completed By', 'Unknown')
                 st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#28a745;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b></span></div>', unsafe_allow_html=True)
-                pdf_data = create_order_pdf(row)
-                st.download_button("📄 Download Receipt", data=pdf_data, file_name=f"Receipt_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_comp_{row['Order ID']}")
+                
+                # 🟢 NEW: Admin-Only Delete Button for Completed Orders
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    pdf_data = create_order_pdf(row)
+                    st.download_button("📄 Download Receipt", data=pdf_data, file_name=f"Receipt_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_comp_{row['Order ID']}")
+                with c2:
+                    if st.session_state.role == "Admin":
+                        if st.button("🗑️ Delete Record", key=f"del_comp_{row['Order ID']}"):
+                            try:
+                                cell = orders_sheet.find(row['Order ID'])
+                                orders_sheet.delete_rows(cell.row)
+                                st.warning("Record Deleted permanently!")
+                                time.sleep(1)
+                                st.rerun()
+                            except Exception as e: st.error(f"Failed to delete: {e}")
 
 # --- PAGE 3: STOCK AUDIT (EMPLOYEE VIEW) ---
 elif page == "🔍 Stock Audit":
@@ -622,6 +656,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
