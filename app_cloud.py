@@ -51,7 +51,7 @@ def get_gspread_client():
         except: audit_sheet = None
         
         try: master_sheet = db.worksheet("Master Items")
-     except: master_sheet = None
+        except: master_sheet = None
 
      return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet
     except Exception as e:
@@ -597,6 +597,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
