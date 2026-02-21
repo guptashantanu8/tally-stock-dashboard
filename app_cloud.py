@@ -312,13 +312,15 @@ elif page == "📝 Order Desk":
                         if tg_token and tg_chat_id:
                             alert_text = f"""🚨 *NEW ORDER ALERT* 🚨\n*Order ID:* {order_id}\n*Customer:* {customer_name}\n*Items:* {details_str}\n*Notes:* {order_notes if order_notes else 'None'}\n*Placed By:* {st.session_state.user_name}"""
                             encoded_text = urllib.parse.quote(alert_text)
-                            url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}&parse_mode=Markdown"
+                            # Removed Markdown formatting to prevent crashes, and added error logging
+                            url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}"
                             resp = requests.get(url)
                             
                             if resp.status_code == 200:
                                 st.success("✈️ Telegram Alert Sent!")
                             else:
-                                st.warning("Order saved, but Telegram alert failed.")
+                                # This will print the EXACT reason Telegram rejected it!
+                                st.warning(f"Telegram rejected the message. Error: {resp.text}")
                     except Exception as tg_e:
                         st.warning(f"Telegram Alert Error: {tg_e}")
                     
@@ -551,5 +553,6 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
