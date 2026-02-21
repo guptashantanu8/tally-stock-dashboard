@@ -68,7 +68,11 @@ except:
     ai_model = None
 
 # --- COOKIE MANAGER & SESSION STATE ---
-cookie_manager = stx.CookieManager()
+# We give it a key so Streamlit keeps it active
+cookie_manager = stx.CookieManager(key="manglam_cookies")
+
+# Small delay to let the browser send existing cookies to the app
+time.sleep(0.1) 
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -76,19 +80,19 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_name = ""
     st.session_state.role = ""
 
-# 🟢 NEW: Auto-Login Check
+# Check for cookies only if not already logged in
 if not st.session_state.logged_in:
     c_user = cookie_manager.get("mt_userid")
     c_name = cookie_manager.get("mt_username")
     c_role = cookie_manager.get("mt_role")
     
-    # If the cookies exist, bypass the login screen instantly!
     if c_user and c_name and c_role:
         st.session_state.logged_in = True
         st.session_state.user_id = c_user
         st.session_state.user_name = c_name
         st.session_state.role = c_role
         st.rerun()
+
 
 # ==========================================
 # LOGIN SCREEN
@@ -703,6 +707,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
