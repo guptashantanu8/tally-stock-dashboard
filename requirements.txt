@@ -6,4 +6,6 @@ oauth2client
 pytz
 google-generativeai
 fpdf2
+urllib3
+requests
 
