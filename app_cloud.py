@@ -305,22 +305,45 @@ elif page == "📝 Order Desk":
                     st.success(f"✅ Order {order_id} placed! Sending alert...")
                     
                     # 🟢 BULLETPROOF TELEGRAM ALERT 🟢
+                    # 🟢 POLISHED TELEGRAM ALERT 🟢
                     try:
                         tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                         tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
                         
                         if tg_token and tg_chat_id:
-                            alert_text = f"""🚨 *NEW ORDER ALERT* 🚨\n*Order ID:* {order_id}\n*Customer:* {customer_name}\n*Items:* {details_str}\n*Notes:* {order_notes if order_notes else 'None'}\n*Placed By:* {st.session_state.user_name}"""
+                            # 1. Build the items into a clean text-based table
+                            items_array = details_str.split(" | ")
+                            table_text = "━━━━━━━━━━━━━━━━━━━━\n"
+                            for item in items_array:
+                                if ": " in item:
+                                    name, qty = item.split(": ", 1)
+                                    table_text += f"▪️ {name} ➔ {qty}\n"
+                                else:
+                                    table_text += f"▪️ {item}\n"
+                            table_text += "━━━━━━━━━━━━━━━━━━━━\n"
+                            
+                            # 2. Build the final message dynamically
+                            alert_text = "NEW ORDER ALERT\n\n"
+                            alert_text += f"🆔 {order_id}\n"
+                            alert_text += f"👤 {customer_name}\n\n"
+                            alert_text += f"{table_text}"
+                            
+                            # 3. Only add the Notes line if notes actually exist
+                            if order_notes and str(order_notes).strip():
+                                alert_text += f"\n📝 Notes: {order_notes}\n"
+                                
+                            alert_text += f"\n✅ Placed By: {st.session_state.user_name}"
+                            
                             encoded_text = urllib.parse.quote(alert_text)
-                            # Removed Markdown formatting to prevent crashes, and added error logging
+                            
+                            # Send the message
                             url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}"
                             resp = requests.get(url)
                             
                             if resp.status_code == 200:
                                 st.success("✈️ Telegram Alert Sent!")
                             else:
-                                # This will print the EXACT reason Telegram rejected it!
-                                st.warning(f"Telegram rejected the message. Error: {resp.text}")
+                                st.warning(f"Telegram failed. Error: {resp.text}")
                     except Exception as tg_e:
                         st.warning(f"Telegram Alert Error: {tg_e}")
                     
@@ -553,6 +576,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
