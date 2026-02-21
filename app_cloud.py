@@ -67,12 +67,28 @@ try:
 except:
     ai_model = None
 
-# --- SESSION STATE ---
+# --- COOKIE MANAGER & SESSION STATE ---
+cookie_manager = stx.CookieManager()
+
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_id = ""
     st.session_state.user_name = ""
     st.session_state.role = ""
+
+# 🟢 NEW: Auto-Login Check
+if not st.session_state.logged_in:
+    c_user = cookie_manager.get("mt_userid")
+    c_name = cookie_manager.get("mt_username")
+    c_role = cookie_manager.get("mt_role")
+    
+    # If the cookies exist, bypass the login screen instantly!
+    if c_user and c_name and c_role:
+        st.session_state.logged_in = True
+        st.session_state.user_id = c_user
+        st.session_state.user_name = c_name
+        st.session_state.role = c_role
+        st.rerun()
 
 # ==========================================
 # LOGIN SCREEN
@@ -104,6 +120,13 @@ if not st.session_state.logged_in:
                         st.session_state.user_id = user_match.iloc[0]['User ID']
                         st.session_state.user_name = user_match.iloc[0]['Name']
                         st.session_state.role = user_match.iloc[0]['Role']
+                        
+                        # 🟢 NEW: Save Login Cookies for 30 Days
+                        expire_date = datetime.now() + timedelta(days=30)
+                        cookie_manager.set("mt_userid", st.session_state.user_id, expires_at=expire_date)
+                        cookie_manager.set("mt_username", st.session_state.user_name, expires_at=expire_date)
+                        cookie_manager.set("mt_role", st.session_state.role, expires_at=expire_date)
+                        
                         st.success(f"Welcome back, {st.session_state.user_name}!")
                         time.sleep(1)
                         st.rerun()
@@ -187,26 +210,18 @@ def create_order_pdf(row):
         
     return bytes(pdf.output())
 
-# --- APP NAVIGATION ---
-st.sidebar.title(f"🏢 Nyc Brand")
-st.sidebar.markdown(f"**User:** {st.session_state.user_name}")
-st.sidebar.markdown(f"**Role:** {st.session_state.role}")
-st.sidebar.divider()
-
-pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor"]
-if st.session_state.role == "Admin":
-    pages.append("📊 Audit Report")
-    pages.append("⚙️ Admin Dashboard")
-
-page = st.sidebar.radio("Navigate", pages)
-
 st.sidebar.divider()
 if st.sidebar.button("🔄 Force Refresh Data"):
     st.cache_data.clear()
     st.rerun()
 if st.sidebar.button("🚪 Logout"):
+    # 🟢 NEW: Destroy the cookies on logout
     st.session_state.logged_in = False
+    cookie_manager.delete("mt_userid")
+    cookie_manager.delete("mt_username")
+    cookie_manager.delete("mt_role")
     st.rerun()
+
 
 # --- PAGE 1: INVENTORY DASHBOARD ---
 if page == "📦 Inventory Dashboard":
@@ -673,6 +688,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
