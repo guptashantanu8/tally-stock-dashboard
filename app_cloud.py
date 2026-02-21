@@ -10,6 +10,8 @@ import pytz
 import uuid
 import google.generativeai as genai
 from fpdf import FPDF
+import urllib.parse  # <--- NEW
+import requests
 
 # --- CONFIGURATION ---
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSGCN0vX5T-HTyvx1Bkbm8Jm8QlQrZRgYj_0_E2kKX7UKQvE12oVQ0s-QZqkct7Ev6c0sp3Bqx82JQR/pub?output=csv" # Put your CSV link here!
@@ -297,12 +299,32 @@ elif page == "📝 Order Desk":
                 
                 order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
-                try:
-                    orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
-                    st.success(f"✅ Order {order_id} placed! Refreshing...")
-                    time.sleep(3)
-                    st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
+                # 🟢 NEW: BULLETPROOF TELEGRAM ALERT 🟢
+                    try:
+                        tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
+                        tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+                        
+                        if tg_token and tg_chat_id:
+                            # Format for Telegram (Markdown)
+                            alert_text = f"""🚨 *NEW ORDER ALERT* 🚨
+*Order ID:* {order_id}
+*Customer:* {customer_name}
+*Items:* {details_str}
+*Notes:* {order_notes if order_notes else 'None'}
+*Placed By:* {st.session_state.user_name}"""
+                            
+                            encoded_text = urllib.parse.quote(alert_text)
+                            
+                            # Official Telegram API Endpoint
+                            url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}&parse_mode=Markdown"
+                            resp = requests.get(url)
+                            
+                            if resp.status_code == 200:
+                                st.success("✈️ Telegram Alert Sent to Dispatch Team!")
+                            else:
+                                st.warning("Order saved, but Telegram alert failed.")
+                    except Exception as tg_e:
+                        st.warning(f"Telegram Alert Error: {tg_e}")
 
     with order_tab2:
         if not orders_df.empty and 'Status' in orders_df.columns:
@@ -528,3 +550,4 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
