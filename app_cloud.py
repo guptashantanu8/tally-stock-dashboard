@@ -210,18 +210,33 @@ def create_order_pdf(row):
         
     return bytes(pdf.output())
 
+# ==========================================
+# APP NAVIGATION MENU
+# ==========================================
+st.sidebar.title(f"🏢 NYC Brand")
+st.sidebar.markdown(f"**User:** {st.session_state.user_name}")
+st.sidebar.markdown(f"**Role:** {st.session_state.role}")
+st.sidebar.divider()
+
+pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor"]
+
+# Admin only pages
+if st.session_state.role == "Admin":
+    pages.append("📊 Audit Report")
+    pages.append("⚙️ Admin Dashboard")
+
+page = st.sidebar.radio("Navigate", pages)
+
 st.sidebar.divider()
 if st.sidebar.button("🔄 Force Refresh Data"):
     st.cache_data.clear()
     st.rerun()
 if st.sidebar.button("🚪 Logout"):
-    # 🟢 NEW: Destroy the cookies on logout
     st.session_state.logged_in = False
     cookie_manager.delete("mt_userid")
     cookie_manager.delete("mt_username")
     cookie_manager.delete("mt_role")
     st.rerun()
-
 
 # --- PAGE 1: INVENTORY DASHBOARD ---
 if page == "📦 Inventory Dashboard":
@@ -688,6 +703,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
