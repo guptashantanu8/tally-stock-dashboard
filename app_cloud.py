@@ -54,17 +54,14 @@ def get_gspread_client():
         try: master_sheet = db.worksheet("Master Items")
         except: master_sheet = None
 
-        # 🟢 NEW: Securely fetch the Live Stock sheet using our private JSON credentials
-        stock_sheet = db.worksheet("Tally Live Stock")
+        # 🟢 THE FIX: Automatically grab the very first tab, just like the CSV link did!
+        stock_sheet = db.sheet1
 
         return stock_sheet, db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet
     except Exception as e:
         return None, None, None, None, None, None, None, None, None
 
-# 🟢 NEW: Unpack the new stock_sheet variable securely
 stock_sheet, orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet = get_gspread_client()
-
-# ... (Keep your AI config and Cookie Manager exactly as they are here) ...
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -146,14 +143,17 @@ if not st.session_state.logged_in:
 # MAIN APP & HELPER FUNCTIONS
 # ==========================================
 @st.cache_data(ttl=60)
-def load_data(_sheet): # The underscore protects the secure object from being cached incorrectly
+def load_data(_sheet): 
     try:
         if not _sheet:
             return pd.DataFrame()
             
-        # Securely pull the data using the encrypted connection
-        data = _sheet.get_all_records()
-        df = pd.DataFrame(data)
+        # 🟢 THE FIX: get_all_values() is much safer for Tally data than get_all_records()
+        data = _sheet.get_all_values()
+        if not data or len(data) < 2:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(data[1:], columns=data[0])
         df.columns = df.columns.astype(str).str.strip()
         
         if 'Quantity' in df.columns:
@@ -167,7 +167,6 @@ def load_data(_sheet): # The underscore protects the secure object from being ca
     except Exception as e:
         return pd.DataFrame()
 
-# 🟢 NEW: Pass the secure sheet object into the function instead of the public URL
 df = load_data(stock_sheet)
 
 def generate_html_table(details_str):
@@ -717,6 +716,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
