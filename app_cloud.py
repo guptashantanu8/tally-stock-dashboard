@@ -69,12 +69,6 @@ except:
 
 # --- COOKIE MANAGER & SESSION STATE ---
 cookie_manager = stx.CookieManager(key="mt_cookie_manager")
-
-# 🟢 THE DEBUG SCANNER (Add these two lines)
-all_cookies = cookie_manager.get_all()
-st.warning(f"🕵️ Debug Scanner - Cookies found by browser: {all_cookies}")
-
-# Give the invisible JS component a moment to wake up
 time.sleep(0.5)
 
 if 'logged_in' not in st.session_state:
@@ -83,21 +77,19 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_name = ""
     st.session_state.role = ""
 
-# Check cookies ONLY if we are currently logged out
+# 🟢 Check for the SINGLE bundled cookie
 if not st.session_state.logged_in:
-    # Grab all cookies at once to prevent multiple component crashes
     all_cookies = cookie_manager.get_all()
+    c_auth = all_cookies.get("mt_auth")
     
-    if all_cookies:
-        c_user = all_cookies.get("mt_userid")
-        c_name = all_cookies.get("mt_username")
-        c_role = all_cookies.get("mt_role")
-        
-        if c_user and c_name and c_role:
+    if c_auth:
+        # Unpack the bundled data
+        parts = str(c_auth).split("::")
+        if len(parts) == 3:
             st.session_state.logged_in = True
-            st.session_state.user_id = c_user
-            st.session_state.user_name = c_name
-            st.session_state.role = c_role
+            st.session_state.user_id = parts[0]
+            st.session_state.user_name = parts[1]
+            st.session_state.role = parts[2]
             st.rerun()
 
 # ==========================================
@@ -131,15 +123,12 @@ if not st.session_state.logged_in:
                         st.session_state.user_name = user_match.iloc[0]['Name']
                         st.session_state.role = user_match.iloc[0]['Role']
                         
-                        # Save Login Cookies for 30 Days
+                        # 🟢 Bundle all info into ONE string: "admin::Super Admin::Admin"
                         expire_date = datetime.now() + timedelta(days=30)
-                        cookie_manager.set("mt_userid", st.session_state.user_id, expires_at=expire_date)
-                        cookie_manager.set("mt_username", st.session_state.user_name, expires_at=expire_date)
-                        cookie_manager.set("mt_role", st.session_state.role, expires_at=expire_date)
+                        auth_string = f"{st.session_state.user_id}::{st.session_state.user_name}::{st.session_state.role}"
+                        cookie_manager.set("mt_auth", auth_string, expires_at=expire_date)
                         
                         st.success(f"Welcome back, {st.session_state.user_name}! Securing login...")
-                        
-                        # 🔴 CRITICAL: Force Python to wait 2 seconds so the cookie actually saves!
                         time.sleep(2)
                         st.rerun()
                     else:
@@ -245,9 +234,8 @@ if st.sidebar.button("🔄 Force Refresh Data"):
     st.rerun()
 if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
-    cookie_manager.delete("mt_userid")
-    cookie_manager.delete("mt_username")
-    cookie_manager.delete("mt_role")
+    cookie_manager.delete("mt_auth")          # 🟢 Delete the new bundled cookie
+    cookie_manager.delete("mt_userid")        # 🟢 Clean up the old broken one
     st.rerun()
 
 # --- PAGE 1: INVENTORY DASHBOARD ---
@@ -715,6 +703,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
