@@ -54,11 +54,17 @@ def get_gspread_client():
         try: master_sheet = db.worksheet("Master Items")
         except: master_sheet = None
 
-        return db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet
-    except Exception as e:
-        return None, None, None, None, None, None, None
+        # 🟢 NEW: Securely fetch the Live Stock sheet using our private JSON credentials
+        stock_sheet = db.worksheet("Tally Live Stock")
 
-orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet = get_gspread_client()
+        return stock_sheet, db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet
+    except Exception as e:
+        return None, None, None, None, None, None, None, None, None
+
+# 🟢 NEW: Unpack the new stock_sheet variable securely
+stock_sheet, orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet = get_gspread_client()
+
+# ... (Keep your AI config and Cookie Manager exactly as they are here) ...
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -140,21 +146,29 @@ if not st.session_state.logged_in:
 # MAIN APP & HELPER FUNCTIONS
 # ==========================================
 @st.cache_data(ttl=60)
-def load_data():
+def load_data(_sheet): # The underscore protects the secure object from being cached incorrectly
     try:
-        df = pd.read_csv(SHEET_CSV_URL)
-        df.columns = df.columns.str.strip()
+        if not _sheet:
+            return pd.DataFrame()
+            
+        # Securely pull the data using the encrypted connection
+        data = _sheet.get_all_records()
+        df = pd.DataFrame(data)
+        df.columns = df.columns.astype(str).str.strip()
+        
         if 'Quantity' in df.columns:
             df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
             df['Unit'] = df['Unit'].fillna('units')
             df['Item'] = df['Item Name']
-            df['Group'] = df['Group']
+            if 'Group' not in df.columns:
+                df['Group'] = 'Default'
             df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
         return df
-    except:
+    except Exception as e:
         return pd.DataFrame()
 
-df = load_data()
+# 🟢 NEW: Pass the secure sheet object into the function instead of the public URL
+df = load_data(stock_sheet)
 
 def generate_html_table(details_str):
     items = details_str.split(" | ")
@@ -703,6 +717,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
