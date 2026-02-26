@@ -67,11 +67,11 @@ try:
 except:
     ai_model = None
 
-# --- COOKIE MANAGER & SESSION STATE ---
-# We give it a key so Streamlit keeps it active
-cookie_manager = stx.CookieManager(key="manglam_cookies")
+# --- COOKIE MANAGER ---
+# Adding a specific key ensures the cookie component stays 'awake'
+cookie_manager = stx.CookieManager(key="manglam_tradelink_cookie_manager")
 
-# Small delay to let the browser send existing cookies to the app
+# Give the browser a tiny moment to register the component
 time.sleep(0.1) 
 
 if 'logged_in' not in st.session_state:
@@ -80,7 +80,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_name = ""
     st.session_state.role = ""
 
-# Check for cookies only if not already logged in
+# Check for cookies only if the session is currently logged out
 if not st.session_state.logged_in:
     c_user = cookie_manager.get("mt_userid")
     c_name = cookie_manager.get("mt_username")
@@ -91,6 +91,7 @@ if not st.session_state.logged_in:
         st.session_state.user_id = c_user
         st.session_state.user_name = c_name
         st.session_state.role = c_role
+        # Force the app to show the dashboard immediately
         st.rerun()
 
 
@@ -707,6 +708,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
