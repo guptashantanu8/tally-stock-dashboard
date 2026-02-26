@@ -21,19 +21,72 @@ IST = pytz.timezone('Asia/Kolkata')
 
 st.set_page_config(page_title="Manglam Tradelink Portal", layout="wide", page_icon="🏭")
 
-# --- CUSTOM STYLE ---
+# --- CUSTOM STYLE (PREMIUM SAAS UI) ---
 st.markdown("""
     <style>
-    .stApp { background-color: #ffffff; color: #000000; }
-    .order-card { padding: 15px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 5px; border-left: 5px solid #007bff; background-color: #f8f9fa;}
-    .completed-card { border-left: 5px solid #28a745; background-color: #f8f9fa; margin-bottom: 10px;}
-    .item-banner { background-color: #e9ecef; padding: 12px 15px; border-radius: 8px 8px 0px 0px; border-left: 5px solid #17a2b8; margin-top: 20px;}
-    .item-inputs { background-color: #f8f9fa; padding: 15px; border-radius: 0px 0px 8px 8px; border: 1px solid #e9ecef; border-top: none; margin-bottom: 10px;}
-    .order-table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 10px; background-color: white; border-radius: 5px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    .order-table th { background-color: #f1f3f5; padding: 8px 12px; text-align: left; border-bottom: 2px solid #ddd; font-size: 14px;}
-    .order-table td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 14px;}
-    .login-box { max-width: 400px; margin: 0 auto; padding: 30px; border: 1px solid #ddd; border-radius: 10px; background-color: #f8f9fa; box-shadow: 0 4px 8px rgba(0,0,0,0.1);}
-    .ai-card { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); padding: 20px; border-radius: 10px; color: #333; margin-bottom: 20px;}
+    /* 1. Hide Streamlit Branding & Adjust Spacing */
+    [data-testid="stToolbar"] {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    .block-container {padding-top: 2rem !important; padding-bottom: 2rem !important;}
+    
+    /* 2. App Background & Global Font Tweaks */
+    .stApp {background-color: #f8f9fc; color: #1e293b;}
+    
+    /* 3. Sleek Login Box */
+    .login-box {
+        max-width: 420px; margin: 40px auto; padding: 40px; 
+        background: #ffffff; border-radius: 16px; 
+        box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;
+    }
+    
+    /* 4. Modern Order Cards with Hover Lift */
+    .order-card { 
+        padding: 20px; background: #ffffff; border-radius: 12px; 
+        border-left: 6px solid #3b82f6; margin-bottom: 15px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.02); border-top: 1px solid #f1f5f9;
+        border-right: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .order-card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px rgba(0,0,0,0.05); }
+    .completed-card { border-left-color: #10b981; }
+    
+    /* 5. Clean Item Banners & Inputs for Order Form */
+    .item-banner { 
+        background: linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%); 
+        padding: 15px 20px; border-radius: 10px 10px 0px 0px; 
+        border-left: 5px solid #6366f1; margin-top: 25px; 
+        border: 1px solid #e2e8f0; border-bottom: none;
+    }
+    .item-inputs { 
+        background: #ffffff; padding: 20px; border-radius: 0px 0px 10px 10px; 
+        border: 1px solid #e2e8f0; border-top: none; margin-bottom: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+    }
+    
+    /* 6. Beautiful Tables */
+    .order-table { 
+        width: 100%; border-collapse: collapse; margin-top: 15px; 
+        background-color: white; border-radius: 8px; overflow: hidden; 
+        border: 1px solid #e2e8f0;
+    }
+    .order-table th { background-color: #f8fafc; padding: 12px 15px; text-align: left; font-size: 13px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0;}
+    .order-table td { padding: 12px 15px; border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #334155;}
+    
+    /* 7. Vibrant AI Card */
+    .ai-card { 
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); 
+        padding: 25px; border-radius: 16px; color: white; 
+        margin-bottom: 25px; box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
+    }
+    .ai-card h4 { color: white !important; margin-top: 0;}
+    .ai-card p { color: #f8fafc !important; }
+    
+    /* 8. Dashboard Metrics Styling */
+    [data-testid="stMetric"] {
+        background-color: #ffffff; padding: 15px 20px; 
+        border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); 
+        border: 1px solid #e2e8f0;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -716,6 +769,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
