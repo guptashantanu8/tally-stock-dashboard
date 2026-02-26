@@ -70,6 +70,10 @@ except:
 # --- COOKIE MANAGER & SESSION STATE ---
 cookie_manager = stx.CookieManager(key="mt_cookie_manager")
 
+# 🟢 THE DEBUG SCANNER (Add these two lines)
+all_cookies = cookie_manager.get_all()
+st.warning(f"🕵️ Debug Scanner - Cookies found by browser: {all_cookies}")
+
 # Give the invisible JS component a moment to wake up
 time.sleep(0.5)
 
@@ -711,6 +715,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
