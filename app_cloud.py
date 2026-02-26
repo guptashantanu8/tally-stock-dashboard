@@ -67,32 +67,37 @@ try:
 except:
     ai_model = None
 
-# --- COOKIE MANAGER ---
-# Adding a specific key ensures the cookie component stays 'awake'
-cookie_manager = stx.CookieManager(key="manglam_tradelink_cookie_manager")
+# --- COOKIE MANAGER & SESSION STATE ---
+# Adding a unique key is the most important part for stability
+cookie_manager = stx.CookieManager(key="manglam_tradelink_final_v1")
 
-# Give the browser a tiny moment to register the component
-time.sleep(0.1) 
-
+# 1. Initialize session state if not present
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_id = ""
     st.session_state.user_name = ""
     st.session_state.role = ""
 
-# Check for cookies only if the session is currently logged out
+# 2. Check for cookies ONLY if we aren't already marked as logged in
 if not st.session_state.logged_in:
-    c_user = cookie_manager.get("mt_userid")
-    c_name = cookie_manager.get("mt_username")
-    c_role = cookie_manager.get("mt_role")
+    # Give the browser a tiny 0.2 second head start to load the cookies
+    time.sleep(0.2) 
     
-    if c_user and c_name and c_role:
-        st.session_state.logged_in = True
-        st.session_state.user_id = c_user
-        st.session_state.user_name = c_name
-        st.session_state.role = c_role
-        # Force the app to show the dashboard immediately
-        st.rerun()
+    try:
+        c_user = cookie_manager.get("mt_userid")
+        c_name = cookie_manager.get("mt_username")
+        c_role = cookie_manager.get("mt_role")
+        
+        # If all three cookies are found, perform auto-login
+        if c_user and c_name and c_role:
+            st.session_state.logged_in = True
+            st.session_state.user_id = c_user
+            st.session_state.user_name = c_name
+            st.session_state.role = c_role
+            st.rerun()
+    except:
+        # This prevents the "Sudden Error" from stopping the app
+        pass
 
 
 # ==========================================
@@ -708,6 +713,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
