@@ -550,10 +550,60 @@ elif page == "📝 Order Desk":
 
     with order_tab3:
         if not orders_df.empty and 'Status' in orders_df.columns:
-            completed_df = orders_df[orders_df['Status'] == 'Completed'].iloc[::-1]
-            for idx, row in completed_df.iterrows():
+            # 1. Base Data
+            completed_df = orders_df[orders_df['Status'] == 'Completed'].copy()
+            
+            # 2. Parse Dates for Filtering (Safely handles different formats)
+            completed_df['Parsed Date'] = pd.to_datetime(completed_df['Date'], format="%d-%m-%Y %I:%M %p", errors='coerce').dt.date
+            
+            # 3. Discretionary Filter Menu
+            with st.expander("🔎 Advanced Filters & Search"):
+                fc1, fc2, fc3, fc4 = st.columns(4)
+                
+                with fc1:
+                    search_query = st.text_input("Search (Name, ID, Notes)", placeholder="e.g. Sharma...", key="search_comp")
+                
+                with fc2:
+                    min_date = completed_df['Parsed Date'].dropna().min() if not completed_df['Parsed Date'].dropna().empty else datetime.today().date()
+                    max_date = completed_df['Parsed Date'].dropna().max() if not completed_df['Parsed Date'].dropna().empty else datetime.today().date()
+                    
+                    date_filter = st.date_input("Date Range", value=(), min_value=min_date, max_value=max_date, key="date_comp")
+                
+                with fc3:
+                    emp_list = ["All Employees"] + sorted(completed_df['Completed By'].dropna().unique().tolist())
+                    emp_filter = st.selectbox("Completed By", emp_list, key="emp_comp")
+                    
+                with fc4:
+                    item_list = ["All Items"] + df['Item'].dropna().unique().tolist() if not df.empty else ["All Items"]
+                    item_filter = st.selectbox("Contains Fabric/Item", item_list, key="item_comp")
+                    
+            # 4. Apply Filters
+            filtered_df = completed_df.copy()
+            
+            if search_query:
+                filtered_df = filtered_df[
+                    filtered_df['Order ID'].astype(str).str.contains(search_query, case=False, na=False) |
+                    filtered_df['Customer Name'].astype(str).str.contains(search_query, case=False, na=False) |
+                    filtered_df['Notes'].astype(str).str.contains(search_query, case=False, na=False)
+                ]
+                
+            if isinstance(date_filter, tuple) and len(date_filter) == 2:
+                start_date, end_date = date_filter
+                filtered_df = filtered_df[(filtered_df['Parsed Date'] >= start_date) & (filtered_df['Parsed Date'] <= end_date)]
+                
+            if emp_filter != "All Employees":
+                filtered_df = filtered_df[filtered_df['Completed By'] == emp_filter]
+                
+            if item_filter != "All Items":
+                filtered_df = filtered_df[filtered_df['Order Details'].astype(str).str.contains(item_filter, case=False, na=False)]
+
+            # 5. Display the Results (Newest First)
+            filtered_df = filtered_df.iloc[::-1]
+            st.markdown(f"<p style='color: #64748b; font-size: 14px;'>Showing <b>{len(filtered_df)}</b> completed orders matching your criteria.</p>", unsafe_allow_html=True)
+
+            for idx, row in filtered_df.iterrows():
                 cb = row.get('Completed By', 'Unknown')
-                st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#28a745;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b></span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="completed-card order-card"><h4 style="margin-top:0; color:#10b981;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}<hr><span style="color: #6c757d;">✅ Completed by: <b>{cb}</b> on {row.get("Date", "")}</span></div>', unsafe_allow_html=True)
                 
                 c1, c2 = st.columns([1, 1])
                 with c1:
@@ -769,6 +819,7 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
 
 
 
