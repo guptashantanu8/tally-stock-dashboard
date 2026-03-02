@@ -903,12 +903,20 @@ elif page == "🏢 Rent Tracker":
                 c1, c2 = st.columns(2)
                 with c1:
                     st.markdown("##### 🏠 Rent Charge")
-                    charge_rent = st.checkbox(f"Apply Base Rent (₹{t_data['Rent Amount']})", value=True)
+                    # Safely fetch rent
+                    try: base_rent = float(t_data.get('Rent Amount', 0.0))
+                    except (ValueError, TypeError): base_rent = 0.0
+                    
+                    charge_rent = st.checkbox(f"Apply Base Rent (₹{base_rent})", value=True)
                 
                 with c2:
                     st.markdown("##### ⚡ Electricity Charge")
-                    e_type = t_data.get('Electricity Type', 'None')
-                    e_rate = float(t_data.get('Elec Rate', 0.0))
+                    e_type = str(t_data.get('Electricity Type', 'None'))
+                    
+                    # 🟢 FIX: Safely convert rate to float (absorbs empty Google Sheet cells)
+                    try: e_rate = float(t_data.get('Elec Rate', 0.0))
+                    except (ValueError, TypeError): e_rate = 0.0
+                    
                     units = 0.0
                     new_meter = 0.0
                     
@@ -918,8 +926,10 @@ elif page == "🏢 Rent Tracker":
                     elif e_type == 'Fixed':
                         charge_elec = st.checkbox(f"Apply Fixed Electricity (₹{e_rate})", value=True)
                     elif e_type == 'Variable':
-                        # 🟢 NEW: Smart Meter Tracking
-                        prev_meter = float(t_data.get('Meter Reading', 0.0))
+                        # 🟢 FIX: Safely convert meter reading to float
+                        try: prev_meter = float(t_data.get('Meter Reading', 0.0))
+                        except (ValueError, TypeError): prev_meter = 0.0
+                        
                         st.info(f"Last Recorded Meter: **{prev_meter}**")
                         new_meter = st.number_input(f"Enter Current Meter Reading", min_value=prev_meter, step=1.0, value=prev_meter)
                         units = new_meter - prev_meter
@@ -934,16 +944,15 @@ elif page == "🏢 Rent Tracker":
                 if st.button("📝 Post Charges to Ledger", type="primary"):
                     timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
                     try:
-                        # 🟢 FIX: Wrap all numeric variables in float() to prevent JSON crash
                         if charge_rent:
-                            rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Rent", float(t_data['Rent Amount']), "", bill_notes, st.session_state.user_name])
+                            rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Rent", base_rent, "", bill_notes, st.session_state.user_name])
                         
                         if charge_elec:
-                            e_amt = float(e_rate) if e_type == 'Fixed' else float(e_rate * units)
+                            e_amt = e_rate if e_type == 'Fixed' else (e_rate * units)
                             if e_amt > 0:
                                 rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", float(e_amt), float(units), bill_notes, st.session_state.user_name])
                                 
-                                # 🟢 NEW: Update the master meter reading in the Tenants sheet
+                                # Update the master meter reading in the Tenants sheet
                                 if e_type == 'Variable':
                                     t_cell = tenants_sheet.find(str(t_data['Tenant ID']))
                                     tenants_sheet.update_cell(t_cell.row, 8, float(new_meter))
@@ -1022,6 +1031,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
