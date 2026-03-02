@@ -107,14 +107,21 @@ def get_gspread_client():
         try: master_sheet = db.worksheet("Master Items")
         except: master_sheet = None
 
-        # 🟢 THE FIX: Automatically grab the very first tab, just like the CSV link did!
+        # 🟢 NEW: Connect the Rent Tracker sheets
+        try: tenants_sheet = db.worksheet("Tenants")
+        except: tenants_sheet = None
+        
+        try: rent_tx_sheet = db.worksheet("Rent Transactions")
+        except: rent_tx_sheet = None
+
         stock_sheet = db.sheet1
 
-        return stock_sheet, db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet
+        return stock_sheet, db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet
     except Exception as e:
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None, None
 
-stock_sheet, orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet = get_gspread_client()
+# 🟢 UPDATE: Ensure you unpack all 11 variables now!
+stock_sheet, orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -285,7 +292,7 @@ st.sidebar.markdown(f"**User:** {st.session_state.user_name}")
 st.sidebar.markdown(f"**Role:** {st.session_state.role}")
 st.sidebar.divider()
 
-pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor"]
+pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor", "🏢 Rent Tracker"]
 
 # Admin only pages
 if st.session_state.role == "Admin":
@@ -819,6 +826,169 @@ elif page == "⚙️ Admin Dashboard":
     
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
+
+
+
+# --- PAGE 7: RENT TRACKER ---
+elif page == "🏢 Rent Tracker":
+    st.title("🏢 Property & Rent Tracker")
+    
+    if tenants_sheet is None or rent_tx_sheet is None:
+        st.error("⚠️ Database Error: 'Tenants' or 'Rent Transactions' sheets not found in Google Sheets.")
+    else:
+        # Load Data
+        try:
+            df_tenants = pd.DataFrame(tenants_sheet.get_all_records())
+            df_tx = pd.DataFrame(rent_tx_sheet.get_all_records())
+        except:
+            df_tenants, df_tx = pd.DataFrame(), pd.DataFrame()
+
+        # Calculate Pending Balances
+        balances = {}
+        if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns:
+            for t_name in df_tenants['Name'].unique():
+                t_tx = df_tx[df_tx['Tenant Name'] == t_name]
+                charges = pd.to_numeric(t_tx[t_tx['Type'] == 'Charge']['Amount'], errors='coerce').sum()
+                payments = pd.to_numeric(t_tx[t_tx['Type'] == 'Payment']['Amount'], errors='coerce').sum()
+                balances[t_name] = charges - payments
+        elif not df_tenants.empty:
+            for t_name in df_tenants['Name'].unique(): balances[t_name] = 0
+
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
+
+        # TAB 1: DASHBOARD & BALANCES
+        with tab1:
+            st.subheader("Current Pending Balances")
+            if not df_tenants.empty:
+                for idx, row in df_tenants.iterrows():
+                    t_name = row['Name']
+                    bal = balances.get(t_name, 0)
+                    status_color = "#dc3545" if bal > 0 else "#10b981"
+                    status_text = f"DUE: ₹{bal:,.2f}" if bal > 0 else "CLEARED"
+                    
+                    st.markdown(f"""
+                    <div class="order-card">
+                        <h4 style="margin:0; color:#333;">{t_name} <span style="float:right; color:{status_color};">{status_text}</span></h4>
+                        <p style="margin:5px 0 0 0; color:#64748b;">📍 {row.get('Location', 'N/A')} | 🏠 Rent: ₹{row.get('Rent Amount', 0)} | ⚡ Elec: {row.get('Electricity Type', 'N/A')} (Paid by {row.get('Elec Paid By', 'N/A')})</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("No tenants found. Add one in the 'Manage Tenants' tab.")
+
+        # TAB 2: COLLECT PAYMENT
+        with tab2:
+            st.subheader("Record a Received Payment")
+            if not df_tenants.empty:
+                with st.form("payment_form", clear_on_submit=True):
+                    p_tenant = st.selectbox("Select Tenant", df_tenants['Name'].tolist())
+                    p_amt = st.number_input("Payment Amount Received (₹)", min_value=1.0, step=100.0)
+                    p_notes = st.text_input("Notes (e.g. Cash, UPI Reference)")
+                    
+                    if st.form_submit_button("💾 Save Payment", type="primary"):
+                        timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
+                        rent_tx_sheet.append_row([timestamp, p_tenant, "Payment", "Payment Received", p_amt, "", p_notes, st.session_state.user_name])
+                        st.success(f"Payment of ₹{p_amt} recorded for {p_tenant}!")
+                        time.sleep(1)
+                        st.rerun()
+
+        # TAB 3: LOG BILLS (RENT & ELECTRICITY)
+        with tab3:
+            st.subheader("Generate Monthly Charges")
+            if not df_tenants.empty:
+                bill_tenant = st.selectbox("Select Tenant to Bill", df_tenants['Name'].tolist(), key="bill_t")
+                t_data = df_tenants[df_tenants['Name'] == bill_tenant].iloc[0]
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("##### 🏠 Rent Charge")
+                    charge_rent = st.checkbox(f"Apply Base Rent (₹{t_data['Rent Amount']})", value=True)
+                
+                with c2:
+                    st.markdown("##### ⚡ Electricity Charge")
+                    e_type = t_data['Electricity Type']
+                    e_rate = t_data['Elec Rate']
+                    units = 0
+                    
+                    if t_data['Elec Paid By'] == 'Company/Landlord':
+                        st.info("Electricity is covered by the Landlord/Company for this unit.")
+                        charge_elec = False
+                    elif e_type == 'Fixed':
+                        charge_elec = st.checkbox(f"Apply Fixed Electricity (₹{e_rate})", value=True)
+                    elif e_type == 'Variable':
+                        charge_elec = st.checkbox("Apply Variable Electricity", value=True)
+                        if charge_elec:
+                            units = st.number_input(f"Units Consumed (Rate: ₹{e_rate}/unit)", min_value=0.0, step=1.0)
+                    else:
+                        st.write("No electricity tracking configured.")
+                        charge_elec = False
+
+                bill_notes = st.text_input("Billing Month / Notes (e.g., 'March 2026 Rent')", key="bill_n")
+
+                if st.button("📝 Post Charges to Ledger", type="primary"):
+                    timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
+                    try:
+                        if charge_rent:
+                            rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Rent", t_data['Rent Amount'], "", bill_notes, st.session_state.user_name])
+                        if charge_elec:
+                            e_amt = e_rate if e_type == 'Fixed' else (e_rate * units)
+                            if e_amt > 0:
+                                rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", e_amt, units, bill_notes, st.session_state.user_name])
+                        st.success("Charges successfully posted to the tenant's ledger!")
+                        time.sleep(1.5)
+                        st.rerun()
+                    except Exception as e: st.error(f"Error posting charges: {e}")
+
+        # TAB 4: TRANSACTION HISTORY
+        with tab4:
+            st.subheader("Ledger History")
+            if not df_tenants.empty and not df_tx.empty:
+                hist_tenant = st.selectbox("View History For:", ["All Tenants"] + df_tenants['Name'].tolist())
+                
+                hist_df = df_tx.copy()
+                if hist_tenant != "All Tenants":
+                    hist_df = hist_df[hist_df['Tenant Name'] == hist_tenant]
+                
+                hist_df = hist_df.iloc[::-1] # Newest first
+                
+                # Format for display
+                st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
+
+        # TAB 5: MANAGE TENANTS (Add/Edit)
+        with tab5:
+            with st.expander("➕ Add New Tenant", expanded=False):
+                with st.form("add_tenant_form", clear_on_submit=True):
+                    t_id = f"T-{uuid.uuid4().hex[:6].upper()}"
+                    nt_name = st.text_input("Tenant/Company Name")
+                    nt_loc = st.text_input("Location / Unit Number")
+                    nt_rent = st.number_input("Monthly Base Rent (₹)", min_value=0.0, step=500.0)
+                    
+                    st.write("⚡ **Electricity Configuration**")
+                    nt_etype = st.selectbox("Electricity Billing Type", ["Fixed", "Variable", "None"])
+                    nt_erate = st.number_input("Fixed Amount OR Rate Per Unit (₹)", min_value=0.0, step=1.0)
+                    nt_epaid = st.selectbox("Electricity Paid By", ["Tenant", "Company/Landlord"])
+                    
+                    if st.form_submit_button("Create Tenant"):
+                        if nt_name:
+                            tenants_sheet.append_row([t_id, nt_name, nt_loc, nt_rent, nt_etype, nt_erate, nt_epaid])
+                            st.success("Tenant added successfully!")
+                            time.sleep(1)
+                            st.rerun()
+                        else: st.error("Name is required.")
+            
+            st.markdown("### Existing Tenants")
+            if not df_tenants.empty:
+                for idx, row in df_tenants.iterrows():
+                    with st.expander(f"⚙️ {row['Name']} ({row['Location']})"):
+                        if st.session_state.role == "Admin":
+                            if st.button("🗑️ Delete Tenant", key=f"del_t_{idx}"):
+                                cell = tenants_sheet.find(row['Tenant ID'])
+                                tenants_sheet.delete_rows(cell.row)
+                                st.warning("Tenant deleted.")
+                                time.sleep(1)
+                                st.rerun()
+                        else:
+                            st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
