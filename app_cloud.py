@@ -220,7 +220,7 @@ def fetch_cached_data(cache_key, _sheet):
     except Exception as e:
         return pd.DataFrame()
 
-# 🟢 THE CRITICAL FIX IS THIS EXACT LINE:
+# 🟢 THIS IS THE LINE THAT KEEPS CRASHING. IT MUST LOOK EXACTLY LIKE THIS:
 df = fetch_cached_data("LiveStock", stock_sheet)
 
 if not df.empty and 'Quantity' in df.columns:
@@ -1047,6 +1047,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
