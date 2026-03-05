@@ -203,23 +203,31 @@ if not st.session_state.logged_in:
 # ==========================================
 # MAIN APP & HELPER FUNCTIONS
 # ==========================================
-# 🟢 THE FIX: A Universal Memory Cache (The underscore in _sheet is CRITICAL so it doesn't crash)
 @st.cache_data(ttl=60)
 def fetch_cached_data(_sheet): 
     try:
         if _sheet is None: return pd.DataFrame()
         
-        # get_all_values() is 10x faster and safer than get_all_records()
         data = _sheet.get_all_values()
-        if not data or len(data) < 2: return pd.DataFrame()
+        if not data: return pd.DataFrame()
         
-        df = pd.DataFrame(data[1:], columns=data[0])
-        df.columns = df.columns.astype(str).str.strip()
+        # 🟢 Clean the headers to perfectly remove invisible spaces
+        headers = [str(h).strip() for h in data[0]]
+        
+        # If it's JUST headers and no data
+        if len(data) == 1: 
+            return pd.DataFrame(columns=headers)
+            
+        df = pd.DataFrame(data[1:], columns=headers)
+        
+        # 🟢 DESTROY GHOST ROWS: Drop any rows that are completely blank
+        df = df.replace("", None).dropna(how='all').fillna("")
+        
         return df
     except Exception as e:
         return pd.DataFrame()
 
-# 🟢 Cache the Live Stock immediately
+# Cache Live Stock
 df = fetch_cached_data(stock_sheet)
 if not df.empty and 'Quantity' in df.columns:
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
@@ -293,7 +301,6 @@ st.sidebar.divider()
 
 pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor", "🏢 Rent Tracker"]
 
-# Admin only pages
 if st.session_state.role == "Admin":
     pages.append("📊 Audit Report")
     pages.append("⚙️ Admin Dashboard")
@@ -306,8 +313,8 @@ if st.sidebar.button("🔄 Force Refresh Data"):
     st.rerun()
 if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
-    cookie_manager.delete("mt_auth")          # 🟢 Delete the new bundled cookie
-    cookie_manager.delete("mt_userid")        # 🟢 Clean up the old broken one
+    cookie_manager.delete("mt_auth")
+    cookie_manager.delete("mt_userid")
     st.rerun()
 
 # --- PAGE 1: INVENTORY DASHBOARD ---
@@ -336,7 +343,7 @@ if page == "📦 Inventory Dashboard":
             if not filtered_df.empty:
                 chart_df = filtered_df.sort_values('Quantity', ascending=False)
                 fig = px.bar(chart_df, x='Item', y='Quantity', color='Group', hover_data=['Display Qty'])
-                fig.update_layout(xaxis_tickangle=-45, height=500, plot_bgcolor="white")
+                fig.update_layout(xaxis_tickangle=-45, height=500, plot_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
@@ -348,7 +355,6 @@ elif page == "📝 Order Desk":
     st.title("📝 Order Management")
     orders_df = fetch_cached_data(orders_sheet)
     
-    # 🟢 THE FIX: We just need to put the tabs back!
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
     with order_tab1:
@@ -832,17 +838,16 @@ elif page == "🏢 Rent Tracker":
     if tenants_sheet is None or rent_tx_sheet is None:
         st.error("⚠️ Database Error: 'Tenants' or 'Rent Transactions' sheets not found in Google Sheets.")
     else:
-        # Load Data
         df_tenants = fetch_cached_data(tenants_sheet)
         df_tx = fetch_cached_data(rent_tx_sheet)
 
-        # 🟢 THE EMERGENCY BRAKE: Stop the app right here before drawing any tabs!
-        if not df_tenants.empty and 'Name' not in df_tenants.columns:
-            st.error("⚠️ Critical Database Error: The 'Tenants' sheet is missing the 'Name' header in Row 1.")
-            st.info("💡 Please fix Row 1 in your Google Sheet, then click '🔄 Force Refresh Data' in the sidebar.")
-            st.stop()  # <--- This safely halts the page. No crash!
+        # 🟢 THE DIAGNOSTIC EMERGENCY BRAKE
+        if 'Name' not in df_tenants.columns:
+            st.error("⚠️ Critical Database Error: The 'Name' column is missing.")
+            st.warning(f"🕵️ Debugger: Here are the exact headers Python is seeing right now: {df_tenants.columns.tolist()}")
+            st.info("💡 If you see completely random text or blank spaces above, Google Sheets has saved empty ghost rows. Please delete Rows 2 through 1000 in your spreadsheet, click 'Force Refresh Data', and try again.")
+            st.stop()
 
-        # Calculate Pending Balances safely
         balances = {}
         if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
             for t_name in df_tenants['Name'].dropna().unique():
@@ -854,7 +859,6 @@ elif page == "🏢 Rent Tracker":
             for t_name in df_tenants['Name'].dropna().unique(): 
                 balances[t_name] = 0
 
-        # Tabs are only drawn if the Emergency Brake wasn't pulled
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
         # TAB 1: DASHBOARD & BALANCES
@@ -1039,6 +1043,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
