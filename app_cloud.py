@@ -204,28 +204,31 @@ if not st.session_state.logged_in:
 # MAIN APP & HELPER FUNCTIONS
 # ==========================================
 @st.cache_data(ttl=60)
-def fetch_cached_data(_sheet): 
+def fetch_cached_data(cache_key, _sheet):  # 🟢 NEW: Added cache_key
     try:
         if _sheet is None: return pd.DataFrame()
         
         data = _sheet.get_all_values()
         if not data: return pd.DataFrame()
         
-        # 🟢 Clean the headers to perfectly remove invisible spaces
         headers = [str(h).strip() for h in data[0]]
-        
-        # If it's JUST headers and no data
-        if len(data) == 1: 
-            return pd.DataFrame(columns=headers)
+        if len(data) == 1: return pd.DataFrame(columns=headers)
             
         df = pd.DataFrame(data[1:], columns=headers)
-        
-        # 🟢 DESTROY GHOST ROWS: Drop any rows that are completely blank
         df = df.replace("", None).dropna(how='all').fillna("")
-        
         return df
     except Exception as e:
         return pd.DataFrame()
+
+# 🟢 UPDATE 1: Pass a unique name tag for the Stock Sheet
+df = fetch_cached_data("LiveStock", stock_sheet)
+
+if not df.empty and 'Quantity' in df.columns:
+    df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+    df['Unit'] = df['Unit'].fillna('units')
+    df['Item'] = df['Item Name']
+    if 'Group' not in df.columns: df['Group'] = 'Default'
+    df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
 
 # Cache Live Stock
 df = fetch_cached_data(stock_sheet)
@@ -353,7 +356,7 @@ if page == "📦 Inventory Dashboard":
 # --- PAGE 2: ORDER DESK ---
 elif page == "📝 Order Desk":
     st.title("📝 Order Management")
-    orders_df = fetch_cached_data(orders_sheet)
+    orders_df = fetch_cached_data("Orders", orders_sheet) # 🟢 UPDATE 2: Name tag added!
     
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
@@ -838,8 +841,9 @@ elif page == "🏢 Rent Tracker":
     if tenants_sheet is None or rent_tx_sheet is None:
         st.error("⚠️ Database Error: 'Tenants' or 'Rent Transactions' sheets not found in Google Sheets.")
     else:
-        df_tenants = fetch_cached_data(tenants_sheet)
-        df_tx = fetch_cached_data(rent_tx_sheet)
+        # 🟢 UPDATE 3: Name tags added!
+        df_tenants = fetch_cached_data("Tenants", tenants_sheet)
+        df_tx = fetch_cached_data("RentTx", rent_tx_sheet)
 
         # 🟢 THE DIAGNOSTIC EMERGENCY BRAKE
         if 'Name' not in df_tenants.columns:
@@ -1043,6 +1047,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
