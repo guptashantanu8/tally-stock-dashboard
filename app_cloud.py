@@ -97,9 +97,14 @@ def get_gspread_client():
         import json
         creds_raw = st.secrets["GOOGLE_CREDENTIALS"]
         
-        # 🟢 THE SMART LOADER: Convert string to dictionary if needed
+        # 🟢 THE BULLETPROOF LOADER: strict=False forces Python to ignore line breaks!
         if isinstance(creds_raw, str):
-            creds_dict = json.loads(creds_raw)
+            try:
+                creds_dict = json.loads(creds_raw, strict=False)
+            except Exception:
+                # If it still fails, forcefully fix the literal newlines
+                clean_raw = creds_raw.replace('\n', '\\n').replace('\r', '')
+                creds_dict = json.loads(clean_raw, strict=False)
         else:
             creds_dict = dict(creds_raw)
             
@@ -925,6 +930,7 @@ elif page == "🏢 Rent Tracker":
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
