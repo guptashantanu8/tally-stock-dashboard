@@ -203,32 +203,30 @@ if not st.session_state.logged_in:
 # ==========================================
 # MAIN APP & HELPER FUNCTIONS
 # ==========================================
+# 🟢 THE FIX: A Universal Memory Cache (The underscore in _sheet is CRITICAL so it doesn't crash)
 @st.cache_data(ttl=60)
-def load_data(_sheet): 
+def fetch_cached_data(_sheet): 
     try:
-        if not _sheet:
-            return pd.DataFrame()
-            
-        # 🟢 THE FIX: get_all_values() is much safer for Tally data than get_all_records()
+        if _sheet is None: return pd.DataFrame()
+        
+        # get_all_values() is 10x faster and safer than get_all_records()
         data = _sheet.get_all_values()
-        if not data or len(data) < 2:
-            return pd.DataFrame()
-            
+        if not data or len(data) < 2: return pd.DataFrame()
+        
         df = pd.DataFrame(data[1:], columns=data[0])
         df.columns = df.columns.astype(str).str.strip()
-        
-        if 'Quantity' in df.columns:
-            df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
-            df['Unit'] = df['Unit'].fillna('units')
-            df['Item'] = df['Item Name']
-            if 'Group' not in df.columns:
-                df['Group'] = 'Default'
-            df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
         return df
     except Exception as e:
         return pd.DataFrame()
 
-df = load_data(stock_sheet)
+# 🟢 Cache the Live Stock immediately
+df = fetch_cached_data(stock_sheet)
+if not df.empty and 'Quantity' in df.columns:
+    df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+    df['Unit'] = df['Unit'].fillna('units')
+    df['Item'] = df['Item Name']
+    if 'Group' not in df.columns: df['Group'] = 'Default'
+    df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
 
 def generate_html_table(details_str):
     items = details_str.split(" | ")
@@ -348,13 +346,7 @@ if page == "📦 Inventory Dashboard":
 # --- PAGE 2: ORDER DESK ---
 elif page == "📝 Order Desk":
     st.title("📝 Order Management")
-    try:
-        all_orders = orders_sheet.get_all_records()
-        orders_df = pd.DataFrame(all_orders)
-    except:
-        orders_df = pd.DataFrame()
-        
-    order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
+    orders_df = fetch_cached_data(orders_sheet)  # 🟢 Uses the new fast cache!
     
     with order_tab1:
         try:
@@ -835,14 +827,11 @@ elif page == "🏢 Rent Tracker":
     st.title("🏢 Property & Rent Tracker")
     
     if tenants_sheet is None or rent_tx_sheet is None:
-        st.error("⚠️ Database Error: 'Tenants' or 'Rent Transactions' sheets not found in Google Sheets.")
+        st.error("⚠️ Database Error: Sheets not found.")
     else:
-        # Load Data
-        try:
-            df_tenants = pd.DataFrame(tenants_sheet.get_all_records())
-            df_tx = pd.DataFrame(rent_tx_sheet.get_all_records())
-        except:
-            df_tenants, df_tx = pd.DataFrame(), pd.DataFrame()
+        # 🟢 Uses the new fast cache!
+        df_tenants = fetch_cached_data(tenants_sheet)
+        df_tx = fetch_cached_data(rent_tx_sheet)
 
         # Calculate Pending Balances
         balances = {}
@@ -1039,6 +1028,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
