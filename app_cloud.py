@@ -94,13 +94,16 @@ st.markdown("""
 @st.cache_resource
 def get_gspread_client():
     try:
+        # 🟢 Using your original working secret key
+        creds_dict = st.secrets["gsheets"] 
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
+        
+        # Open the main workbook
         db = client.open("Tally Live Stock")
         
-        # 🟢 THE SAFE LOADER: Tries to find each sheet one by one
+        # 🟢 PRECISE LOADER: This ensures we get the exact tabs needed
         def safe_open(name):
             try: return db.worksheet(name)
             except: return None
@@ -917,6 +920,7 @@ elif page == "🏢 Rent Tracker":
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
