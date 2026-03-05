@@ -836,16 +836,23 @@ elif page == "🏢 Rent Tracker":
         df_tenants = fetch_cached_data(tenants_sheet)
         df_tx = fetch_cached_data(rent_tx_sheet)
 
-        # Calculate Pending Balances
+        # Calculate Pending Balances safely
         balances = {}
-        if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns:
-            for t_name in df_tenants['Name'].unique():
-                t_tx = df_tx[df_tx['Tenant Name'] == t_name]
-                charges = pd.to_numeric(t_tx[t_tx['Type'] == 'Charge']['Amount'], errors='coerce').sum()
-                payments = pd.to_numeric(t_tx[t_tx['Type'] == 'Payment']['Amount'], errors='coerce').sum()
-                balances[t_name] = charges - payments
-        elif not df_tenants.empty:
-            for t_name in df_tenants['Name'].unique(): balances[t_name] = 0
+        
+        if not df_tenants.empty:
+            # 🟢 THE FIX: Check if the 'Name' column actually exists before doing math!
+            if 'Name' not in df_tenants.columns:
+                st.error("⚠️ Database Error: The 'Tenants' sheet is missing the 'Name' header in Row 1. Please ensure Cell B1 is exactly 'Name'.")
+            else:
+                if not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
+                    for t_name in df_tenants['Name'].dropna().unique():
+                        t_tx = df_tx[df_tx['Tenant Name'] == t_name]
+                        charges = pd.to_numeric(t_tx[t_tx['Type'] == 'Charge']['Amount'], errors='coerce').sum()
+                        payments = pd.to_numeric(t_tx[t_tx['Type'] == 'Payment']['Amount'], errors='coerce').sum()
+                        balances[t_name] = charges - payments
+                else:
+                    for t_name in df_tenants['Name'].dropna().unique(): 
+                        balances[t_name] = 0
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
@@ -1031,6 +1038,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
