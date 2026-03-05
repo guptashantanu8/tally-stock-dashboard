@@ -858,12 +858,18 @@ elif page == "🏢 Rent Tracker":
             if 'Pro Rata' not in df_tenants.columns: df_tenants['Pro Rata'] = 'Yes'
             if 'Status' not in df_tenants.columns: df_tenants['Status'] = 'Active'
 
+        # 🟢 THE COMMA-STRIPPING FIX
         balances = {}
         if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
+            # 1. Strip out commas and ₹ symbols so Python can read the pure numbers
+            safe_amounts = df_tx['Amount'].astype(str).str.replace(',', '').str.replace('₹', '').str.strip()
+            df_tx['Safe Amount'] = pd.to_numeric(safe_amounts, errors='coerce').fillna(0)
+            
+            # 2. Calculate accurate balances
             for t_name in df_tenants['Name'].dropna().unique():
                 t_tx = df_tx[df_tx['Tenant Name'] == t_name]
-                charges = pd.to_numeric(t_tx[t_tx['Type'] == 'Charge']['Amount'], errors='coerce').sum()
-                payments = pd.to_numeric(t_tx[t_tx['Type'] == 'Payment']['Amount'], errors='coerce').sum()
+                charges = t_tx[t_tx['Type'] == 'Charge']['Safe Amount'].sum()
+                payments = t_tx[t_tx['Type'] == 'Payment']['Safe Amount'].sum()
                 balances[t_name] = charges - payments
         elif not df_tenants.empty and 'Name' in df_tenants.columns:
             for t_name in df_tenants['Name'].dropna().unique(): 
@@ -1130,6 +1136,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
