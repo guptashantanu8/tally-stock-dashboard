@@ -94,23 +94,17 @@ st.markdown("""
 @st.cache_resource
 def get_gspread_client():
     try:
-        # 🟢 UNIVERSAL KEY FINDER: Automatically finds your Google credentials
-        creds_dict = None
-        for key in ["gsheets", "gcp_service_account", "google_sheets", "connections"]:
-            if key in st.secrets:
-                creds_dict = st.secrets[key]
-                break
+        # 🟢 Using your exact secret name: GOOGLE_CREDENTIALS
+        creds_dict = st.secrets["GOOGLE_CREDENTIALS"]
         
-        # If still not found, check if it's stored directly in the top-level secrets
-        if creds_dict is None:
-            creds_dict = dict(st.secrets)
-
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
+        # Open the main workbook
         db = client.open("Tally Live Stock")
         
+        # Helper to open specific tabs
         def safe_open(name):
             try: return db.worksheet(name)
             except: return None
@@ -927,6 +921,7 @@ elif page == "🏢 Rent Tracker":
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
