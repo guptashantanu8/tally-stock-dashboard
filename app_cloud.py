@@ -10,13 +10,12 @@ import pytz
 import uuid
 import google.generativeai as genai
 from fpdf import FPDF
-import urllib.parse  # <--- NEW
+import urllib.parse
 import requests
 import extra_streamlit_components as stx
 import calendar
 
 # --- CONFIGURATION ---
-SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSGCN0vX5T-HTyvx1Bkbm8Jm8QlQrZRgYj_0_E2kKX7UKQvE12oVQ0s-QZqkct7Ev6c0sp3Bqx82JQR/pub?output=csv" # Put your CSV link here!
 SHEET_NAME = "Tally Live Stock"
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -108,7 +107,6 @@ def get_gspread_client():
         try: master_sheet = db.worksheet("Master Items")
         except: master_sheet = None
 
-        # 🟢 NEW: Connect the Rent Tracker sheets
         try: tenants_sheet = db.worksheet("Tenants")
         except: tenants_sheet = None
         
@@ -121,7 +119,6 @@ def get_gspread_client():
     except Exception as e:
         return None, None, None, None, None, None, None, None, None, None, None
 
-# 🟢 UPDATE: Ensure you unpack all 11 variables now!
 stock_sheet, orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
@@ -141,13 +138,11 @@ if 'logged_in' not in st.session_state:
     st.session_state.user_name = ""
     st.session_state.role = ""
 
-# 🟢 Check for the SINGLE bundled cookie
 if not st.session_state.logged_in:
     all_cookies = cookie_manager.get_all()
     c_auth = all_cookies.get("mt_auth")
     
     if c_auth:
-        # Unpack the bundled data
         parts = str(c_auth).split("::")
         if len(parts) == 3:
             st.session_state.logged_in = True
@@ -187,7 +182,6 @@ if not st.session_state.logged_in:
                         st.session_state.user_name = user_match.iloc[0]['Name']
                         st.session_state.role = user_match.iloc[0]['Role']
                         
-                        # 🟢 Bundle all info into ONE string: "admin::Super Admin::Admin"
                         expire_date = datetime.now() + timedelta(days=30)
                         auth_string = f"{st.session_state.user_id}::{st.session_state.user_name}::{st.session_state.role}"
                         cookie_manager.set("mt_auth", auth_string, expires_at=expire_date)
@@ -201,37 +195,44 @@ if not st.session_state.logged_in:
     st.stop() 
 
 # ==========================================
-# MAIN APP & HELPER FUNCTIONS
+# MAIN APP & HELPER FUNCTIONS (3 MEMORY BANKS)
 # ==========================================
 @st.cache_data(ttl=60)
-def fetch_cached_data(cache_key, _sheet): 
+def fetch_stock_cache(_sheet): 
     try:
         if _sheet is None: return pd.DataFrame()
-        
         data = _sheet.get_all_values()
-        if not data: return pd.DataFrame()
-        
+        if len(data) < 2: return pd.DataFrame()
         headers = [str(h).strip() for h in data[0]]
-        if len(data) == 1: return pd.DataFrame(columns=headers)
-            
-        df = pd.DataFrame(data[1:], columns=headers)
-        df = df.replace("", None).dropna(how='all').fillna("")
+        df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
         return df
-    except Exception as e:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# 🟢 THIS IS THE LINE THAT KEEPS CRASHING. IT MUST LOOK EXACTLY LIKE THIS:
-df = fetch_cached_data("LiveStock", stock_sheet)
+@st.cache_data(ttl=60)
+def fetch_orders_cache(_sheet): 
+    try:
+        if _sheet is None: return pd.DataFrame()
+        data = _sheet.get_all_values()
+        if len(data) < 2: return pd.DataFrame()
+        headers = [str(h).strip() for h in data[0]]
+        df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
+        return df
+    except: return pd.DataFrame()
 
-if not df.empty and 'Quantity' in df.columns:
-    df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
-    df['Unit'] = df['Unit'].fillna('units')
-    df['Item'] = df['Item Name']
-    if 'Group' not in df.columns: df['Group'] = 'Default'
-    df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
+@st.cache_data(ttl=60)
+def fetch_rent_cache(_sheet): 
+    try:
+        if _sheet is None: return pd.DataFrame()
+        data = _sheet.get_all_values()
+        if len(data) < 2: return pd.DataFrame()
+        headers = [str(h).strip() for h in data[0]]
+        df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
+        return df
+    except: return pd.DataFrame()
 
-# Cache Live Stock
-df = fetch_cached_data(stock_sheet)
+# 🟢 LOAD INVENTORY SAFELY
+df = fetch_stock_cache(stock_sheet)
+
 if not df.empty and 'Quantity' in df.columns:
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
     df['Unit'] = df['Unit'].fillna('units')
@@ -356,7 +357,7 @@ if page == "📦 Inventory Dashboard":
 # --- PAGE 2: ORDER DESK ---
 elif page == "📝 Order Desk":
     st.title("📝 Order Management")
-    orders_df = fetch_cached_data("Orders", orders_sheet) # 🟢 UPDATE 2: Name tag added!
+    orders_df = fetch_orders_cache(orders_sheet)
     
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
@@ -369,7 +370,6 @@ elif page == "📝 Order Desk":
         st.subheader("Create a New Order")
         st.write("👤 **Customer Details**")
         
-        # 🟢 Added 'key' to inputs so we can clear them later
         customer_dropdown = st.selectbox("Search Existing Customer:", customer_list, index=None, placeholder="Start typing to search...", key="order_cust_drop")
         
         if not customer_dropdown: 
@@ -388,7 +388,6 @@ elif page == "📝 Order Desk":
         except:
             item_list = df['Item'].tolist() if not df.empty else []
             
-        # 🟢 Added 'key' here too
         selected_items = st.multiselect("Search and choose items...", item_list, key="order_items")
         order_details_dict = {}
         
@@ -407,7 +406,6 @@ elif page == "📝 Order Desk":
                 st.markdown(f'<div class="item-banner"><h4 style="margin:0; color: #333;">{item}</h4><span style="color: {stock_color}; font-weight: bold;">📦 Stock: {avail_qty:,.0f} {unit}</span></div>', unsafe_allow_html=True)
                 st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
                 c1, c2, c3 = st.columns(3)
-                # The quantities already had keys (p_item, a_item, u_item)
                 with c1: qty = st.number_input(f"Order Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_{item}")
                 with c2: alt_qty = st.number_input("Alt Qty", min_value=0.0, value=0.0, step=1.0, key=f"a_{item}")
                 with c3: alt_unit = st.text_input("Alt Unit", key=f"u_{item}")
@@ -457,7 +455,6 @@ elif page == "📝 Order Desk":
                     except Exception as tg_e:
                         pass
                     
-                    # 🟢 NEW: CLEAR THE FORM MEMORY AFTER SUCCESS 🟢
                     keys_to_clear = ["order_cust_drop", "order_cust_text", "order_notes", "order_items"]
                     for item in selected_items:
                         keys_to_clear.extend([f"p_{item}", f"a_{item}", f"u_{item}"])
@@ -477,7 +474,6 @@ elif page == "📝 Order Desk":
             for idx, row in pending_df.iterrows():
                 st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {row["Customer Name"]}<br><b>Notes:</b> {row.get("Notes", "None")}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
                 
-                # Top Action Buttons
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button(f"✅ Mark Complete", key=f"btn_{row['Order ID']}_{idx}"):
@@ -486,7 +482,6 @@ elif page == "📝 Order Desk":
                             orders_sheet.update_cell(cell.row, 5, 'Completed')
                             orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
                             
-                            # Telegram Completion Alert
                             try:
                                 tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                                 tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
@@ -504,7 +499,6 @@ elif page == "📝 Order Desk":
                     pdf_data = create_order_pdf(row)
                     st.download_button("📄 Share PDF", data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}_{idx}")
 
-                # 🟢 SMART EDIT MENU (Patched Keys)
                 with st.expander("✏️ Modify or Delete Order"):
                     mod_cust = st.text_input("Customer Name", str(row['Customer Name']), key=f"mcust_{row['Order ID']}_{idx}")
                     
@@ -562,13 +556,9 @@ elif page == "📝 Order Desk":
 
     with order_tab3:
         if not orders_df.empty and 'Status' in orders_df.columns:
-            # 1. Base Data
             completed_df = orders_df[orders_df['Status'] == 'Completed'].copy()
-            
-            # 2. Parse Dates for Filtering (Safely handles different formats)
             completed_df['Parsed Date'] = pd.to_datetime(completed_df['Date'], format="%d-%m-%Y %I:%M %p", errors='coerce').dt.date
             
-            # 3. Discretionary Filter Menu
             with st.expander("🔎 Advanced Filters & Search"):
                 fc1, fc2, fc3, fc4 = st.columns(4)
                 
@@ -578,7 +568,6 @@ elif page == "📝 Order Desk":
                 with fc2:
                     min_date = completed_df['Parsed Date'].dropna().min() if not completed_df['Parsed Date'].dropna().empty else datetime.today().date()
                     max_date = completed_df['Parsed Date'].dropna().max() if not completed_df['Parsed Date'].dropna().empty else datetime.today().date()
-                    
                     date_filter = st.date_input("Date Range", value=(), min_value=min_date, max_value=max_date, key="date_comp")
                 
                 with fc3:
@@ -589,7 +578,6 @@ elif page == "📝 Order Desk":
                     item_list = ["All Items"] + df['Item'].dropna().unique().tolist() if not df.empty else ["All Items"]
                     item_filter = st.selectbox("Contains Fabric/Item", item_list, key="item_comp")
                     
-            # 4. Apply Filters
             filtered_df = completed_df.copy()
             
             if search_query:
@@ -609,7 +597,6 @@ elif page == "📝 Order Desk":
             if item_filter != "All Items":
                 filtered_df = filtered_df[filtered_df['Order Details'].astype(str).str.contains(item_filter, case=False, na=False)]
 
-            # 5. Display the Results (Newest First)
             filtered_df = filtered_df.iloc[::-1]
             st.markdown(f"<p style='color: #64748b; font-size: 14px;'>Showing <b>{len(filtered_df)}</b> completed orders matching your criteria.</p>", unsafe_allow_html=True)
 
@@ -636,7 +623,6 @@ elif page == "📝 Order Desk":
 elif page == "🔍 Stock Audit":
     st.title("🔍 Physical Stock Audit")
     
-    # 🟢 NEW: Option to view System Quantities before starting
     with st.expander("👀 View Current System Quantities (Live Tally Stock)"):
         st.dataframe(df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Group", "Quantity"], ascending=[True, False]), use_container_width=True, hide_index=True)
     
@@ -653,7 +639,6 @@ elif page == "🔍 Stock Audit":
         except:
             active_audit = pd.DataFrame(columns=['Timestamp', 'Item Name', 'Location', 'Quantity Found', 'Employee Name', 'Status'])
 
-        # 🟢 NEW: Calculate Pending/Remaining Items dynamically
         all_items = df['Item'].dropna().unique().tolist()
         audited_items = active_audit['Item Name'].dropna().unique().tolist() if not active_audit.empty else []
         remaining_items = [i for i in all_items if i not in audited_items]
@@ -664,7 +649,6 @@ elif page == "🔍 Stock Audit":
         st.divider()
         st.write("Count scattered batches in the warehouse. Your entries will be summed automatically.")
 
-        # Let them select from ALL items, but highlight remaining
         audit_item = st.selectbox("Search & Select Item to Count:", all_items, index=None, placeholder="Type item name...")
         
         if audit_item:
@@ -708,7 +692,6 @@ elif page == "🔍 Stock Audit":
                 st.markdown("**Recent entries for this item:**")
                 st.dataframe(item_audits[['Location', 'Quantity Found', 'Employee Name', 'Timestamp']].iloc[::-1], hide_index=True)
 
-        # 🟢 NEW: Bottom List of Remaining Items
         st.divider()
         st.subheader("📋 Remaining Items to Count")
         if remaining_items:
@@ -832,8 +815,6 @@ elif page == "⚙️ Admin Dashboard":
     try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
 
-
-
 # --- PAGE 7: RENT TRACKER ---
 elif page == "🏢 Rent Tracker":
     st.title("🏢 Property & Rent Tracker")
@@ -841,11 +822,9 @@ elif page == "🏢 Rent Tracker":
     if tenants_sheet is None or rent_tx_sheet is None:
         st.error("⚠️ Database Error: 'Tenants' or 'Rent Transactions' sheets not found in Google Sheets.")
     else:
-        # 🟢 UPDATE 3: Name tags added!
-        df_tenants = fetch_cached_data("Tenants", tenants_sheet)
-        df_tx = fetch_cached_data("RentTx", rent_tx_sheet)
+        df_tenants = fetch_rent_cache(tenants_sheet)
+        df_tx = fetch_rent_cache(rent_tx_sheet)
 
-        # 🟢 THE DIAGNOSTIC EMERGENCY BRAKE
         if 'Name' not in df_tenants.columns:
             st.error("⚠️ Critical Database Error: The 'Name' column is missing.")
             st.warning(f"🕵️ Debugger: Here are the exact headers Python is seeing right now: {df_tenants.columns.tolist()}")
@@ -865,7 +844,6 @@ elif page == "🏢 Rent Tracker":
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
-        # TAB 1: DASHBOARD & BALANCES
         with tab1:
             st.subheader("Current Pending Balances")
             if not df_tenants.empty:
@@ -875,7 +853,6 @@ elif page == "🏢 Rent Tracker":
                     status_color = "#dc3545" if bal > 0 else "#10b981"
                     status_text = f"DUE: ₹{bal:,.2f}" if bal > 0 else "CLEARED"
                     
-                    # 🟢 NEW: Safely fetch the Security Deposit to display on the card
                     try: sec_dep = float(row.get('Security Deposit', 0.0))
                     except (ValueError, TypeError): sec_dep = 0.0
                     
@@ -891,7 +868,6 @@ elif page == "🏢 Rent Tracker":
             else:
                 st.info("No tenants found. Add one in the 'Manage Tenants' tab.")
 
-        # TAB 2: COLLECT PAYMENT
         with tab2:
             st.subheader("Record a Received Payment")
             if not df_tenants.empty:
@@ -907,7 +883,6 @@ elif page == "🏢 Rent Tracker":
                         time.sleep(1)
                         st.rerun()
 
-        # TAB 3: LOG BILLS (RENT & ELECTRICITY)
         with tab3:
             st.subheader("Generate Monthly Charges")
             if not df_tenants.empty:
@@ -969,7 +944,6 @@ elif page == "🏢 Rent Tracker":
                         st.rerun()
                     except Exception as e: st.error(f"Error posting charges: {e}")
 
-        # TAB 4: TRANSACTION HISTORY
         with tab4:
             st.subheader("Ledger History")
             if not df_tenants.empty and not df_tx.empty:
@@ -982,7 +956,6 @@ elif page == "🏢 Rent Tracker":
                 hist_df = hist_df.iloc[::-1]
                 st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
 
-        # TAB 5: MANAGE TENANTS (Add/Edit)
         with tab5:
             with st.expander("➕ Add New Tenant", expanded=False):
                 with st.form("add_tenant_form", clear_on_submit=True):
@@ -992,7 +965,6 @@ elif page == "🏢 Rent Tracker":
                     
                     c1, c2 = st.columns(2)
                     with c1: nt_rent = st.number_input("Monthly Base Rent (₹)", min_value=0.0, step=500.0)
-                    # 🟢 NEW: Security Deposit Input
                     with c2: nt_security = st.number_input("Security Deposit Received (₹)", min_value=0.0, step=500.0)
                     
                     st.write("⚡ **Electricity Configuration**")
@@ -1005,15 +977,12 @@ elif page == "🏢 Rent Tracker":
                         nt_meter = st.number_input("Initial Meter Reading (Base Units)", min_value=0.0, step=1.0)
                         
                     st.divider()
-                    # 🟢 NEW: The Pro-Rata Toggle
                     apply_prorata = st.checkbox("Automatically charge Pro-Rata rent for the remaining days of this month?", value=True)
                     
                     if st.form_submit_button("Create Tenant Profile", type="primary"):
                         if nt_name:
-                            # 1. Save Tenant Profile (Now includes nt_security at the end!)
                             tenants_sheet.append_row([t_id, nt_name, nt_loc, float(nt_rent), nt_etype, float(nt_erate), nt_epaid, float(nt_meter), float(nt_security)])
                             
-                            # 2. 🟢 Process Pro-Rata ONLY if the box was checked
                             if apply_prorata and nt_rent > 0:
                                 now = datetime.now(IST)
                                 days_in_month = calendar.monthrange(now.year, now.month)[1]
@@ -1047,42 +1016,3 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
