@@ -362,6 +362,11 @@ elif page == "📝 Order Desk":
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
     with order_tab1:
+        # 🟢 THE FIX: Initialize a Master Reset Key
+        if 'form_reset' not in st.session_state:
+            st.session_state.form_reset = 0
+        r_key = st.session_state.form_reset
+        
         try:
             cust_data = cust_sheet.get_all_records()
             customer_list = sorted(list(set([str(row['Customer Name']).strip() for row in cust_data if 'Customer Name' in row and str(row['Customer Name']).strip()])))
@@ -370,14 +375,15 @@ elif page == "📝 Order Desk":
         st.subheader("Create a New Order")
         st.write("👤 **Customer Details**")
         
-        customer_dropdown = st.selectbox("Search Existing Customer:", customer_list, index=None, placeholder="Start typing to search...", key="order_cust_drop")
+        # Notice how every input now has f"_{r_key}" attached to it!
+        customer_dropdown = st.selectbox("Search Existing Customer:", customer_list, index=None, placeholder="Start typing to search...", key=f"order_cust_drop_{r_key}")
         
         if not customer_dropdown: 
-            customer_name = st.text_input("Or manually type a New Customer Name:", placeholder="e.g. Sharma Traders", key="order_cust_text")
+            customer_name = st.text_input("Or manually type a New Customer Name:", placeholder="e.g. Sharma Traders", key=f"order_cust_text_{r_key}")
         else: 
             customer_name = customer_dropdown
             
-        order_notes = st.text_input("📝 Order Notes (Optional)", placeholder="e.g. Dispatch via VRL Logistics, Urgent...", key="order_notes")
+        order_notes = st.text_input("📝 Order Notes (Optional)", placeholder="e.g. Dispatch via VRL Logistics, Urgent...", key=f"order_notes_{r_key}")
         
         st.divider()
         st.write("🛒 **Select Items to Add to Cart**")
@@ -388,7 +394,7 @@ elif page == "📝 Order Desk":
         except:
             item_list = df['Item'].tolist() if not df.empty else []
             
-        selected_items = st.multiselect("Search and choose items...", item_list, key="order_items")
+        selected_items = st.multiselect("Search and choose items...", item_list, key=f"order_items_{r_key}")
         order_details_dict = {}
         
         if selected_items:
@@ -406,9 +412,9 @@ elif page == "📝 Order Desk":
                 st.markdown(f'<div class="item-banner"><h4 style="margin:0; color: #333;">{item}</h4><span style="color: {stock_color}; font-weight: bold;">📦 Stock: {avail_qty:,.0f} {unit}</span></div>', unsafe_allow_html=True)
                 st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
                 c1, c2, c3 = st.columns(3)
-                with c1: qty = st.number_input(f"Order Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_{item}")
-                with c2: alt_qty = st.number_input("Alt Qty", min_value=0.0, value=0.0, step=1.0, key=f"a_{item}")
-                with c3: alt_unit = st.text_input("Alt Unit", key=f"u_{item}")
+                with c1: qty = st.number_input(f"Order Qty ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_{item}_{r_key}")
+                with c2: alt_qty = st.number_input("Alt Qty", min_value=0.0, value=0.0, step=1.0, key=f"a_{item}_{r_key}")
+                with c3: alt_unit = st.text_input("Alt Unit", key=f"u_{item}_{r_key}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
                 detail_str = f"{qty} {unit}" + (f" (Alt: {alt_qty} {alt_unit})" if alt_qty > 0 and alt_unit else "")
@@ -428,15 +434,13 @@ elif page == "📝 Order Desk":
                 order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 try:
-                    # 1. Save to Google Sheets
                     orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
                     
-                    # 2. Telegram Alert with Error Reporting
+                    # Telegram Processing
                     tg_success = False
                     try:
                         tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                         tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
-                        
                         if tg_token and tg_chat_id:
                             items_array = details_str.split(" | ")
                             table_text = "━━━━━━━━━━━━━━━━━━━━\n"
@@ -454,14 +458,12 @@ elif page == "📝 Order Desk":
                             alert_text += f"\n✅ Placed By: {st.session_state.user_name}"
                             
                             encoded_text = urllib.parse.quote(alert_text)
-                            url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}"
+                            res = requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}")
                             
-                            # Actually check Telegram's response!
-                            res = requests.get(url)
                             if res.status_code == 200:
                                 tg_success = True
                             else:
-                                st.error(f"⚠️ Order saved, but Telegram failed: {res.text}")
+                                st.error(f"⚠️ Telegram failed: {res.text}")
                         else:
                             st.error("⚠️ Telegram keys are missing from Streamlit Secrets.")
                     except Exception as tg_e:
@@ -470,19 +472,12 @@ elif page == "📝 Order Desk":
                     if tg_success:
                         st.success(f"✅ Order {order_id} placed and alert sent to Warehouse!")
                     else:
-                        st.success(f"✅ Order {order_id} placed successfully!")
+                        st.success(f"✅ Order {order_id} placed successfully in Database!")
 
-                    # 3. INSTANT Form Clear (Force Overwrite)
-                    st.session_state["order_cust_drop"] = None
-                    st.session_state["order_cust_text"] = ""
-                    st.session_state["order_notes"] = ""
-                    st.session_state["order_items"] = []
-                    for item in selected_items:
-                        st.session_state[f"p_{item}"] = 1.0
-                        st.session_state[f"a_{item}"] = 0.0
-                        st.session_state[f"u_{item}"] = ""
-                        
-                    time.sleep(2) # Give the user time to read the success message
+                    # 🟢 THE FIX: Simply advance the reset key to wipe the form!
+                    st.session_state.form_reset += 1
+                            
+                    time.sleep(1.5)
                     st.rerun()
                 except Exception as e: 
                     st.error(f"Error saving order: {e}")
@@ -1035,4 +1030,5 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
