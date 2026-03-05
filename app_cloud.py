@@ -204,7 +204,7 @@ if not st.session_state.logged_in:
 # MAIN APP & HELPER FUNCTIONS
 # ==========================================
 @st.cache_data(ttl=60)
-def fetch_cached_data(cache_key, _sheet):  # 🟢 NEW: Added cache_key
+def fetch_cached_data(cache_key, _sheet): 
     try:
         if _sheet is None: return pd.DataFrame()
         
@@ -220,7 +220,7 @@ def fetch_cached_data(cache_key, _sheet):  # 🟢 NEW: Added cache_key
     except Exception as e:
         return pd.DataFrame()
 
-# 🟢 UPDATE 1: Pass a unique name tag for the Stock Sheet
+# 🟢 THE FIX: We securely pass the "LiveStock" name tag first!
 df = fetch_cached_data("LiveStock", stock_sheet)
 
 if not df.empty and 'Quantity' in df.columns:
@@ -1047,6 +1047,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
