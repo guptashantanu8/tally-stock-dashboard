@@ -859,21 +859,29 @@ elif page == "🏢 Rent Tracker":
             if 'Status' not in df_tenants.columns: df_tenants['Status'] = 'Active'
 
         # 🟢 THE COMMA-STRIPPING FIX
+        # 🟢 THE BULLETPROOF MATH & CLEANING FIX
         balances = {}
         if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
-            # 1. Strip out commas and ₹ symbols so Python can read the pure numbers
-            safe_amounts = df_tx['Amount'].astype(str).str.replace(',', '').str.replace('₹', '').str.strip()
-            df_tx['Safe Amount'] = pd.to_numeric(safe_amounts, errors='coerce').fillna(0)
             
-            # 2. Calculate accurate balances
+            # 1. Destroy invisible trailing spaces in Names and Types
+            df_tx['Tenant Name'] = df_tx['Tenant Name'].astype(str).str.strip()
+            df_tx['Type'] = df_tx['Type'].astype(str).str.strip()
+            df_tenants['Name'] = df_tenants['Name'].astype(str).str.strip()
+            
+            # 2. Extract ONLY pure digits and decimals (Destroys commas, ₹, letters, and spaces)
+            df_tx['Safe Amount'] = df_tx['Amount'].astype(str).str.replace(r'[^\d.]', '', regex=True)
+            df_tx['Safe Amount'] = pd.to_numeric(df_tx['Safe Amount'], errors='coerce').fillna(0.0)
+            
+            # 3. Calculate perfectly accurate balances
             for t_name in df_tenants['Name'].dropna().unique():
                 t_tx = df_tx[df_tx['Tenant Name'] == t_name]
                 charges = t_tx[t_tx['Type'] == 'Charge']['Safe Amount'].sum()
                 payments = t_tx[t_tx['Type'] == 'Payment']['Safe Amount'].sum()
                 balances[t_name] = charges - payments
+                
         elif not df_tenants.empty and 'Name' in df_tenants.columns:
             for t_name in df_tenants['Name'].dropna().unique(): 
-                balances[t_name] = 0
+                balances[t_name] = 0.0
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances & Dashboard", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
@@ -1136,6 +1144,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
