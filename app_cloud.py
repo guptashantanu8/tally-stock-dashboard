@@ -845,8 +845,16 @@ elif page == "🏢 Rent Tracker":
     if tenants_sheet is None or rent_tx_sheet is None:
         st.error("⚠️ Database Error: 'Tenants' or 'Rent Transactions' sheets not found in Google Sheets.")
     else:
-        df_tenants = fetch_rent_cache(tenants_sheet)
-        df_tx = fetch_rent_cache(rent_tx_sheet)
+        df_tenants_raw = fetch_rent_cache(tenants_sheet)
+        df_tx_raw = fetch_rent_cache(rent_tx_sheet)
+
+        # 🟢 FIX 1: ALWAYS WORK WITH COPIES SO STREAMLIT CACHE DOESN'T PANIC
+        df_tenants = df_tenants_raw.copy()
+        df_tx = df_tx_raw.copy()
+
+        # 🟢 FIX 2: STRIP ALL INVISIBLE SPACES FROM GOOGLE SHEETS HEADERS INSTANTLY
+        if not df_tenants.empty: df_tenants.columns = df_tenants.columns.str.strip()
+        if not df_tx.empty: df_tx.columns = df_tx.columns.str.strip()
 
         if not df_tenants.empty and 'Name' not in df_tenants.columns:
             st.error("⚠️ Critical Database Error: The 'Name' column is missing in the Tenants sheet.")
@@ -858,29 +866,26 @@ elif page == "🏢 Rent Tracker":
             if 'Pro Rata' not in df_tenants.columns: df_tenants['Pro Rata'] = 'Yes'
             if 'Status' not in df_tenants.columns: df_tenants['Status'] = 'Active'
 
-        # 🟢 THE COMMA-STRIPPING FIX
-        # 🟢 THE BULLETPROOF MATH & CLEANING FIX
+        # 🟢 FIX 3: BULLETPROOF MATH CALCULATION
         balances = {}
         if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
+            calc_tx = df_tx.copy()
+            calc_tx['Tenant Name'] = calc_tx['Tenant Name'].astype(str).str.strip()
+            calc_tx['Type'] = calc_tx['Type'].astype(str).str.strip()
             
-            # 1. Destroy invisible trailing spaces in Names and Types
-            df_tx['Tenant Name'] = df_tx['Tenant Name'].astype(str).str.strip()
-            df_tx['Type'] = df_tx['Type'].astype(str).str.strip()
-            df_tenants['Name'] = df_tenants['Name'].astype(str).str.strip()
+            calc_tx['Safe Amount'] = calc_tx['Amount'].astype(str).str.replace(r'[^\d.]', '', regex=True)
+            calc_tx['Safe Amount'] = pd.to_numeric(calc_tx['Safe Amount'], errors='coerce').fillna(0.0)
             
-            # 2. Extract ONLY pure digits and decimals (Destroys commas, ₹, letters, and spaces)
-            df_tx['Safe Amount'] = df_tx['Amount'].astype(str).str.replace(r'[^\d.]', '', regex=True)
-            df_tx['Safe Amount'] = pd.to_numeric(df_tx['Safe Amount'], errors='coerce').fillna(0.0)
+            clean_tenants = df_tenants['Name'].astype(str).str.strip().dropna().unique()
             
-            # 3. Calculate perfectly accurate balances
-            for t_name in df_tenants['Name'].dropna().unique():
-                t_tx = df_tx[df_tx['Tenant Name'] == t_name]
+            for t_name in clean_tenants:
+                t_tx = calc_tx[calc_tx['Tenant Name'] == t_name]
                 charges = t_tx[t_tx['Type'] == 'Charge']['Safe Amount'].sum()
                 payments = t_tx[t_tx['Type'] == 'Payment']['Safe Amount'].sum()
                 balances[t_name] = charges - payments
                 
         elif not df_tenants.empty and 'Name' in df_tenants.columns:
-            for t_name in df_tenants['Name'].dropna().unique(): 
+            for t_name in df_tenants['Name'].astype(str).str.strip().dropna().unique(): 
                 balances[t_name] = 0.0
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances & Dashboard", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
@@ -892,7 +897,6 @@ elif page == "🏢 Rent Tracker":
                 vacated_tenants = df_tenants[df_tenants['Status'] == 'Vacated']
                 today = datetime.now(IST).date()
                 
-                # 🟢 NEW: SMART BILLING REMINDER SYSTEM
                 reminders = []
                 for idx, row in active_tenants.iterrows():
                     pr_status = str(row.get('Pro Rata', 'Yes'))
@@ -911,8 +915,8 @@ elif page == "🏢 Rent Tracker":
                 if active_tenants.empty: st.info("No active tenants right now.")
                 
                 for idx, row in active_tenants.iterrows():
-                    t_name = row['Name']
-                    bal = balances.get(t_name, 0)
+                    t_name = str(row['Name']).strip()
+                    bal = balances.get(t_name, 0.0)
                     status_color = "#dc3545" if bal > 0 else "#10b981"
                     status_text = f"DUE: ₹{bal:,.2f}" if bal > 0 else "CLEARED"
                     
@@ -934,8 +938,8 @@ elif page == "🏢 Rent Tracker":
                 if not vacated_tenants.empty:
                     with st.expander("🚪 View Vacated Tenants"):
                         for idx, row in vacated_tenants.iterrows():
-                            t_name = row['Name']
-                            bal = balances.get(t_name, 0)
+                            t_name = str(row['Name']).strip()
+                            bal = balances.get(t_name, 0.0)
                             color = "#dc3545" if bal > 0 else "#6c757d"
                             txt = f"PENDING DUES: ₹{bal:,.2f}" if bal > 0 else "SETTLED"
                             st.markdown(f"**{t_name}** | {row.get('Location', '')} | <span style='color:{color}'>{txt}</span>", unsafe_allow_html=True)
@@ -946,9 +950,9 @@ elif page == "🏢 Rent Tracker":
         with tab2:
             st.subheader("Record a Received Payment")
             if not df_tenants.empty:
-                # Can collect from active OR vacated (to settle final dues)
                 with st.form("payment_form", clear_on_submit=True):
-                    p_tenant = st.selectbox("Select Tenant", df_tenants['Name'].tolist())
+                    clean_tenant_names = df_tenants['Name'].astype(str).str.strip().tolist()
+                    p_tenant = st.selectbox("Select Tenant", clean_tenant_names)
                     p_amt = st.number_input("Payment Amount Received (₹)", min_value=1.0, step=100.0)
                     p_notes = st.text_input("Notes (e.g. Cash, UPI Reference, Final Settlement)")
                     
@@ -964,8 +968,9 @@ elif page == "🏢 Rent Tracker":
         with tab3:
             st.subheader("Generate Monthly Charges")
             if not df_tenants.empty:
-                active_only = df_tenants[df_tenants['Status'] == 'Active']
+                active_only = df_tenants[df_tenants['Status'] == 'Active'].copy()
                 if not active_only.empty:
+                    active_only['Name'] = active_only['Name'].astype(str).str.strip()
                     bill_tenant = st.selectbox("Select Tenant to Bill", active_only['Name'].tolist(), key="bill_t")
                     t_data = active_only[active_only['Name'] == bill_tenant].iloc[0]
                     
@@ -978,7 +983,7 @@ elif page == "🏢 Rent Tracker":
                     
                     with c2:
                         st.markdown("##### ⚡ Electricity Charge")
-                        e_type = str(t_data.get('Electricity Type', 'None'))
+                        e_type = str(t_data.get('Electricity Type', 'None')).strip()
                         try: e_rate = float(t_data.get('Elec Rate', 0.0))
                         except (ValueError, TypeError): e_rate = 0.0
                         
@@ -986,11 +991,10 @@ elif page == "🏢 Rent Tracker":
                         new_meter = 0.0
                         e_amt_final = 0.0
                         
-                        if str(t_data.get('Elec Paid By', '')) == 'Company/Landlord' and e_type not in ['Fixed', 'Direct Bill (Lump Sum)']:
+                        if str(t_data.get('Elec Paid By', '')).strip() == 'Company/Landlord' and e_type not in ['Fixed', 'Direct Bill (Lump Sum)']:
                             st.info("Electricity is covered by the Landlord/Company.")
                             charge_elec = False
-                        
-                        # 🟢 THE NEW LUMP-SUM LOGIC
+                            
                         elif e_type in ['Fixed', 'Direct Bill (Lump Sum)']:
                             st.info("💡 Enter the exact meter bill amount you paid for them.")
                             e_amt_input = st.number_input("Lump Sum Electricity Bill (₹)", min_value=0.0, step=100.0, value=0.0)
@@ -1037,13 +1041,21 @@ elif page == "🏢 Rent Tracker":
         with tab4:
             st.subheader("Ledger History")
             if not df_tenants.empty and not df_tx.empty:
-                hist_tenant = st.selectbox("View History For:", ["All Tenants"] + df_tenants['Name'].tolist())
+                # 🟢 FIX 4: PERFECTLY MATCH DROPDOWN NAMES WITH DATABASE NAMES
+                clean_tenant_list = df_tenants['Name'].astype(str).str.strip().tolist()
+                hist_tenant = st.selectbox("View History For:", ["All Tenants"] + clean_tenant_list)
+                
                 hist_df = df_tx.copy()
+                hist_df['Tenant Name'] = hist_df['Tenant Name'].astype(str).str.strip()
+                
                 if hist_tenant != "All Tenants" and 'Tenant Name' in hist_df.columns:
                     hist_df = hist_df[hist_df['Tenant Name'] == hist_tenant]
                 
+                hist_df = hist_df.dropna(how='all')
                 hist_df = hist_df.iloc[::-1]
+                
                 if 'Type' in hist_df.columns:
+                    hist_df['Type'] = hist_df['Type'].astype(str).str.strip()
                     st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
                 else:
                     st.dataframe(hist_df, use_container_width=True, hide_index=True)
@@ -1061,7 +1073,6 @@ elif page == "🏢 Rent Tracker":
                     with c2: nt_security = st.number_input("Security Deposit Received (₹)", min_value=0.0, step=500.0)
                     
                     st.write("⚡ **Electricity Configuration**")
-                    # 🟢 RENAMED TO DIRECT LUMP SUM BILL
                     nt_etype = st.selectbox("Electricity Billing Type", ["Direct Bill (Lump Sum)", "Variable (Meter)", "None"])
                     nt_erate = st.number_input("Rate Per Unit (₹) - Only if Variable", min_value=0.0, step=1.0)
                     nt_epaid = st.selectbox("Electricity Paid By", ["Tenant", "Company/Landlord"])
@@ -1118,7 +1129,6 @@ elif page == "🏢 Rent Tracker":
                             old_etype = str(row.get('Electricity Type', 'None'))
                             etype_idx = 0 if old_etype in ['Fixed', 'Direct Bill (Lump Sum)'] else 1 if old_etype in ['Variable', 'Variable (Meter)'] else 2
                             
-                            # 🟢 YOU CAN NOW CHANGE THE ELECTRICITY TYPE HERE
                             with e1: e_etype_new = st.selectbox("Elec Type", ["Direct Bill (Lump Sum)", "Variable (Meter)", "None"], index=etype_idx)
                             with e2: e_rate = st.number_input("Per Unit Rate (If Variable)", value=float(row.get('Elec Rate', 0.0)), step=1.0)
                             
