@@ -867,10 +867,17 @@ elif page == "🏢 Rent Tracker":
                     status_color = "#dc3545" if bal > 0 else "#10b981"
                     status_text = f"DUE: ₹{bal:,.2f}" if bal > 0 else "CLEARED"
                     
+                    # 🟢 NEW: Safely fetch the Security Deposit to display on the card
+                    try: sec_dep = float(row.get('Security Deposit', 0.0))
+                    except (ValueError, TypeError): sec_dep = 0.0
+                    
                     st.markdown(f"""
                     <div class="order-card">
                         <h4 style="margin:0; color:#333;">{t_name} <span style="float:right; color:{status_color};">{status_text}</span></h4>
-                        <p style="margin:5px 0 0 0; color:#64748b;">📍 {row.get('Location', 'N/A')} | 🏠 Rent: ₹{row.get('Rent Amount', 0)} | ⚡ Elec: {row.get('Electricity Type', 'N/A')} (Paid by {row.get('Elec Paid By', 'N/A')})</p>
+                        <p style="margin:5px 0 0 0; color:#64748b;">
+                            📍 {row.get('Location', 'N/A')} | 🏠 Rent: ₹{row.get('Rent Amount', 0)} | ⚡ Elec: {row.get('Electricity Type', 'N/A')} (Paid by {row.get('Elec Paid By', 'N/A')})<br>
+                            <span style="color: #0284c7; font-weight: 500;">🛡️ Security Deposit Held: ₹{sec_dep:,.2f}</span>
+                        </p>
                     </div>
                     """, unsafe_allow_html=True)
             else:
@@ -887,7 +894,6 @@ elif page == "🏢 Rent Tracker":
                     
                     if st.form_submit_button("💾 Save Payment", type="primary"):
                         timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
-                        # 🟢 FIX: Wrap amounts in float() to prevent int64 JSON crashes
                         rent_tx_sheet.append_row([timestamp, p_tenant, "Payment", "Payment Received", float(p_amt), "", p_notes, st.session_state.user_name])
                         st.success(f"Payment of ₹{p_amt} recorded for {p_tenant}!")
                         time.sleep(1)
@@ -903,17 +909,13 @@ elif page == "🏢 Rent Tracker":
                 c1, c2 = st.columns(2)
                 with c1:
                     st.markdown("##### 🏠 Rent Charge")
-                    # Safely fetch rent
                     try: base_rent = float(t_data.get('Rent Amount', 0.0))
                     except (ValueError, TypeError): base_rent = 0.0
-                    
                     charge_rent = st.checkbox(f"Apply Base Rent (₹{base_rent})", value=True)
                 
                 with c2:
                     st.markdown("##### ⚡ Electricity Charge")
                     e_type = str(t_data.get('Electricity Type', 'None'))
-                    
-                    # 🟢 FIX: Safely convert rate to float (absorbs empty Google Sheet cells)
                     try: e_rate = float(t_data.get('Elec Rate', 0.0))
                     except (ValueError, TypeError): e_rate = 0.0
                     
@@ -926,7 +928,6 @@ elif page == "🏢 Rent Tracker":
                     elif e_type == 'Fixed':
                         charge_elec = st.checkbox(f"Apply Fixed Electricity (₹{e_rate})", value=True)
                     elif e_type == 'Variable':
-                        # 🟢 FIX: Safely convert meter reading to float
                         try: prev_meter = float(t_data.get('Meter Reading', 0.0))
                         except (ValueError, TypeError): prev_meter = 0.0
                         
@@ -951,8 +952,6 @@ elif page == "🏢 Rent Tracker":
                             e_amt = e_rate if e_type == 'Fixed' else (e_rate * units)
                             if e_amt > 0:
                                 rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", float(e_amt), float(units), bill_notes, st.session_state.user_name])
-                                
-                                # Update the master meter reading in the Tenants sheet
                                 if e_type == 'Variable':
                                     t_cell = tenants_sheet.find(str(t_data['Tenant ID']))
                                     tenants_sheet.update_cell(t_cell.row, 8, float(new_meter))
@@ -972,7 +971,7 @@ elif page == "🏢 Rent Tracker":
                 if hist_tenant != "All Tenants":
                     hist_df = hist_df[hist_df['Tenant Name'] == hist_tenant]
                 
-                hist_df = hist_df.iloc[::-1] # Newest first
+                hist_df = hist_df.iloc[::-1]
                 st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
 
         # TAB 5: MANAGE TENANTS (Add/Edit)
@@ -982,38 +981,47 @@ elif page == "🏢 Rent Tracker":
                     t_id = f"T-{uuid.uuid4().hex[:6].upper()}"
                     nt_name = st.text_input("Tenant/Company Name")
                     nt_loc = st.text_input("Location / Unit Number")
-                    nt_rent = st.number_input("Monthly Base Rent (₹)", min_value=0.0, step=500.0)
+                    
+                    c1, c2 = st.columns(2)
+                    with c1: nt_rent = st.number_input("Monthly Base Rent (₹)", min_value=0.0, step=500.0)
+                    # 🟢 NEW: Security Deposit Input
+                    with c2: nt_security = st.number_input("Security Deposit Received (₹)", min_value=0.0, step=500.0)
                     
                     st.write("⚡ **Electricity Configuration**")
                     nt_etype = st.selectbox("Electricity Billing Type", ["Fixed", "Variable", "None"])
                     nt_erate = st.number_input("Fixed Amount OR Rate Per Unit (₹)", min_value=0.0, step=1.0)
                     nt_epaid = st.selectbox("Electricity Paid By", ["Tenant", "Company/Landlord"])
                     
-                    # 🟢 NEW: Ask for Base Meter Reading if Variable
                     nt_meter = 0.0
                     if nt_etype == "Variable":
                         nt_meter = st.number_input("Initial Meter Reading (Base Units)", min_value=0.0, step=1.0)
+                        
+                    st.divider()
+                    # 🟢 NEW: The Pro-Rata Toggle
+                    apply_prorata = st.checkbox("Automatically charge Pro-Rata rent for the remaining days of this month?", value=True)
                     
-                    if st.form_submit_button("Create Tenant & Auto-Bill Pro-Rata"):
+                    if st.form_submit_button("Create Tenant Profile", type="primary"):
                         if nt_name:
-                            # 1. Save Tenant Profile
-                            tenants_sheet.append_row([t_id, nt_name, nt_loc, float(nt_rent), nt_etype, float(nt_erate), nt_epaid, float(nt_meter)])
+                            # 1. Save Tenant Profile (Now includes nt_security at the end!)
+                            tenants_sheet.append_row([t_id, nt_name, nt_loc, float(nt_rent), nt_etype, float(nt_erate), nt_epaid, float(nt_meter), float(nt_security)])
                             
-                            # 2. 🟢 NEW: Calculate and Auto-Post Pro-Rata Rent
-                            now = datetime.now(IST)
-                            days_in_month = calendar.monthrange(now.year, now.month)[1]
-                            days_active = days_in_month - now.day + 1
-                            pro_rata_rent = round((float(nt_rent) / days_in_month) * days_active, 2)
-                            
-                            if pro_rata_rent > 0:
+                            # 2. 🟢 Process Pro-Rata ONLY if the box was checked
+                            if apply_prorata and nt_rent > 0:
+                                now = datetime.now(IST)
+                                days_in_month = calendar.monthrange(now.year, now.month)[1]
+                                days_active = days_in_month - now.day + 1
+                                pro_rata_rent = round((float(nt_rent) / days_in_month) * days_active, 2)
+                                
                                 timestamp = now.strftime("%d-%m-%Y %I:%M %p")
                                 rent_tx_sheet.append_row([
                                     timestamp, nt_name, "Charge", "Rent (Pro-Rata)", float(pro_rata_rent), "",
                                     f"Pro-rata rent for {days_active} days in {now.strftime('%b %Y')}",
                                     st.session_state.user_name
                                 ])
+                                st.success(f"Tenant added! First pro-rata rent of ₹{pro_rata_rent} automatically charged.")
+                            else:
+                                st.success("Tenant added without pro-rata billing. Rent will start on the next billing cycle.")
                                 
-                            st.success(f"Tenant added! First pro-rata rent of ₹{pro_rata_rent} automatically charged.")
                             time.sleep(2)
                             st.rerun()
                         else: st.error("Name is required.")
@@ -1031,6 +1039,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
