@@ -94,43 +94,33 @@ st.markdown("""
 @st.cache_resource
 def get_gspread_client():
     try:
-        raw_secrets = st.secrets["GOOGLE_CREDENTIALS"]
-        creds_dict = json.loads(raw_secrets, strict=False)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        db = client.open(SHEET_NAME)
+        db = client.open("Tally Live Stock")
         
-        try: audit_sheet = db.worksheet("Audit Logs")
-        except: audit_sheet = None
-        
-        try: master_sheet = db.worksheet("Master Items")
-        except: master_sheet = None
+        # 🟢 THE SAFE LOADER: Tries to find each sheet one by one
+        def safe_open(name):
+            try: return db.worksheet(name)
+            except: return None
 
-        try: tenants_sheet = db.worksheet("Tenants")
-        except: tenants_sheet = None
-        
-        try: rent_tx_sheet = db.worksheet("Rent Transactions")
-        except: rent_tx_sheet = None
-
-        stock_sheet = db.sheet1
-
-        # 🟢 THE FIX: Explicitly name every single sheet so Python doesn't guess
         return (
-            db.worksheet("Tally Live Stock"), # stock_sheet
-            db.worksheet("Orders"), 
-            db.worksheet("Users"), 
-            db.worksheet("Restock Times"), 
-            db.worksheet("Weekly Snapshots"), 
-            db.worksheet("15-Day Sales"), 
-            db.worksheet("Customers"), 
-            db.worksheet("Audit Logs"), 
-            db.worksheet("Master Items"), 
-            db.worksheet("Tenants"), 
-            db.worksheet("Rent Transactions") # This MUST match the tab name exactly
+            safe_open("Tally Live Stock"),
+            safe_open("Orders"),
+            safe_open("Users"),
+            safe_open("Restock Times"),
+            safe_open("Weekly Snapshots"),
+            safe_open("15-Day Sales"),
+            safe_open("Customers"),
+            safe_open("Audit Logs"),
+            safe_open("Master Items"),
+            safe_open("Tenants"),
+            safe_open("Rent Transactions")
         )
     except Exception as e:
-        return None, None, None, None, None, None, None, None, None, None, None
+        st.error(f"Failed to connect to Google Sheets: {e}")
+        return [None]*11
 
 stock_sheet, orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet = get_gspread_client()
 
@@ -927,6 +917,7 @@ elif page == "🏢 Rent Tracker":
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
