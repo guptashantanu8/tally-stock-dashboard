@@ -474,18 +474,15 @@ elif page == "📝 Order Desk":
                     else:
                         st.success(f"✅ Order {order_id} placed successfully in Database!")
 
-                    # 🟢 THE FIX: Simply advance the reset key to wipe the form!
+                    # 🟢 THE UNIFIED FIX: Advance the reset key AND clear the memory cache!
                     st.session_state.form_reset += 1
-
-                    for key in keys_to_clear:
-                        if key in st.session_state:
-                            del st.session_state[key]
+                    fetch_orders_cache.clear()
                             
                     time.sleep(1.5)
-                    fetch_orders_cache.clear() # 🟢 ADD THIS LINE
                     st.rerun()
                 except Exception as e: 
                     st.error(f"Error saving order: {e}")
+                    
 
     with order_tab2:
         if not orders_df.empty and 'Status' in orders_df.columns:
@@ -1038,6 +1035,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
