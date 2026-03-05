@@ -836,11 +836,11 @@ elif page == "🏢 Rent Tracker":
         df_tenants = fetch_cached_data(tenants_sheet)
         df_tx = fetch_cached_data(rent_tx_sheet)
 
-        # 🟢 THE EMERGENCY BRAKE: Stop the entire page from loading if headers are broken
+        # 🟢 THE EMERGENCY BRAKE: Stop the app right here before drawing any tabs!
         if not df_tenants.empty and 'Name' not in df_tenants.columns:
             st.error("⚠️ Critical Database Error: The 'Tenants' sheet is missing the 'Name' header in Row 1.")
-            st.info("💡 Please go to your Google Sheet, ensure row 1 of the 'Tenants' tab has the correct headers, and then click '🔄 Force Refresh Data' in the sidebar.")
-            st.stop()  # <--- This safely halts the page so it doesn't crash!
+            st.info("💡 Please fix Row 1 in your Google Sheet, then click '🔄 Force Refresh Data' in the sidebar.")
+            st.stop()  # <--- This safely halts the page. No crash!
 
         # Calculate Pending Balances safely
         balances = {}
@@ -854,6 +854,7 @@ elif page == "🏢 Rent Tracker":
             for t_name in df_tenants['Name'].dropna().unique(): 
                 balances[t_name] = 0
 
+        # Tabs are only drawn if the Emergency Brake wasn't pulled
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
         # TAB 1: DASHBOARD & BALANCES
@@ -1038,6 +1039,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
