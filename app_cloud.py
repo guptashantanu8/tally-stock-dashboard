@@ -973,11 +973,18 @@ elif page == "🏢 Rent Tracker":
                 hist_tenant = st.selectbox("View History For:", ["All Tenants"] + df_tenants['Name'].tolist())
                 
                 hist_df = df_tx.copy()
-                if hist_tenant != "All Tenants":
+                if hist_tenant != "All Tenants" and 'Tenant Name' in hist_df.columns:
                     hist_df = hist_df[hist_df['Tenant Name'] == hist_tenant]
                 
                 hist_df = hist_df.iloc[::-1]
-                st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
+                
+                # 🟢 THE FIX: Safely check if the 'Type' column exists before trying to color-code it!
+                if 'Type' in hist_df.columns:
+                    st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(hist_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No transaction history found yet. Post a bill or log a payment to see it here!")
 
         with tab5:
             with st.expander("➕ Add New Tenant", expanded=False):
@@ -1039,6 +1046,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
