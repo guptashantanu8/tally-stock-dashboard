@@ -346,7 +346,10 @@ if page == "📦 Inventory Dashboard":
 # --- PAGE 2: ORDER DESK ---
 elif page == "📝 Order Desk":
     st.title("📝 Order Management")
-    orders_df = fetch_cached_data(orders_sheet)  # 🟢 Uses the new fast cache!
+    orders_df = fetch_cached_data(orders_sheet)
+    
+    # 🟢 THE FIX: We just need to put the tabs back!
+    order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
     
     with order_tab1:
         try:
@@ -1028,6 +1031,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
