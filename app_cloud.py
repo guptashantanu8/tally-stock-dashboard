@@ -119,7 +119,7 @@ def get_gspread_client():
             except: return None
 
         return (
-            safe_open("Tally Live Stock"),
+            db.sheet1, # 🟢 THIS FIXES THE DASHBOARD: It automatically grabs your first tab!
             safe_open("Orders"),
             safe_open("Users"),
             safe_open("Restock Times"),
@@ -930,6 +930,7 @@ elif page == "🏢 Rent Tracker":
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
