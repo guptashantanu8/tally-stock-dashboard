@@ -476,8 +476,13 @@ elif page == "📝 Order Desk":
 
                     # 🟢 THE FIX: Simply advance the reset key to wipe the form!
                     st.session_state.form_reset += 1
+
+                    for key in keys_to_clear:
+                        if key in st.session_state:
+                            del st.session_state[key]
                             
                     time.sleep(1.5)
+                    fetch_orders_cache.clear() # 🟢 ADD THIS LINE
                     st.rerun()
                 except Exception as e: 
                     st.error(f"Error saving order: {e}")
@@ -507,6 +512,7 @@ elif page == "📝 Order Desk":
                             
                             st.success(f"Order Completed!")
                             time.sleep(1)
+                            fetch_orders_cache.clear()
                             st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
                 with c2:
@@ -556,6 +562,7 @@ elif page == "📝 Order Desk":
                                     orders_sheet.update_cell(cell.row, 7, mod_notes)
                                     st.success("Order Updated!")
                                     time.sleep(1)
+                                    fetch_orders_cache.clear()
                                     st.rerun()
                                 except Exception as e: st.error(f"Failed to update: {e}")
                     with ec2:
@@ -565,6 +572,7 @@ elif page == "📝 Order Desk":
                                 orders_sheet.delete_rows(cell.row)
                                 st.warning("Order Deleted!")
                                 time.sleep(1)
+                                fetch_orders_cache.clear()
                                 st.rerun()
                             except Exception as e: st.error(f"Failed to delete: {e}")
 
@@ -1030,5 +1038,6 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
