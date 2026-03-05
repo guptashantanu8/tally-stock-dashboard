@@ -830,29 +830,29 @@ elif page == "🏢 Rent Tracker":
     st.title("🏢 Property & Rent Tracker")
     
     if tenants_sheet is None or rent_tx_sheet is None:
-        st.error("⚠️ Database Error: Sheets not found.")
+        st.error("⚠️ Database Error: 'Tenants' or 'Rent Transactions' sheets not found in Google Sheets.")
     else:
-        # 🟢 Uses the new fast cache!
+        # Load Data
         df_tenants = fetch_cached_data(tenants_sheet)
         df_tx = fetch_cached_data(rent_tx_sheet)
 
+        # 🟢 THE EMERGENCY BRAKE: Stop the entire page from loading if headers are broken
+        if not df_tenants.empty and 'Name' not in df_tenants.columns:
+            st.error("⚠️ Critical Database Error: The 'Tenants' sheet is missing the 'Name' header in Row 1.")
+            st.info("💡 Please go to your Google Sheet, ensure row 1 of the 'Tenants' tab has the correct headers, and then click '🔄 Force Refresh Data' in the sidebar.")
+            st.stop()  # <--- This safely halts the page so it doesn't crash!
+
         # Calculate Pending Balances safely
         balances = {}
-        
-        if not df_tenants.empty:
-            # 🟢 THE FIX: Check if the 'Name' column actually exists before doing math!
-            if 'Name' not in df_tenants.columns:
-                st.error("⚠️ Database Error: The 'Tenants' sheet is missing the 'Name' header in Row 1. Please ensure Cell B1 is exactly 'Name'.")
-            else:
-                if not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
-                    for t_name in df_tenants['Name'].dropna().unique():
-                        t_tx = df_tx[df_tx['Tenant Name'] == t_name]
-                        charges = pd.to_numeric(t_tx[t_tx['Type'] == 'Charge']['Amount'], errors='coerce').sum()
-                        payments = pd.to_numeric(t_tx[t_tx['Type'] == 'Payment']['Amount'], errors='coerce').sum()
-                        balances[t_name] = charges - payments
-                else:
-                    for t_name in df_tenants['Name'].dropna().unique(): 
-                        balances[t_name] = 0
+        if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
+            for t_name in df_tenants['Name'].dropna().unique():
+                t_tx = df_tx[df_tx['Tenant Name'] == t_name]
+                charges = pd.to_numeric(t_tx[t_tx['Type'] == 'Charge']['Amount'], errors='coerce').sum()
+                payments = pd.to_numeric(t_tx[t_tx['Type'] == 'Payment']['Amount'], errors='coerce').sum()
+                balances[t_name] = charges - payments
+        elif not df_tenants.empty and 'Name' in df_tenants.columns:
+            for t_name in df_tenants['Name'].dropna().unique(): 
+                balances[t_name] = 0
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
@@ -1038,6 +1038,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
