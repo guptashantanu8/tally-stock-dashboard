@@ -202,8 +202,10 @@ def fetch_stock_cache(_sheet):
     try:
         if _sheet is None: return pd.DataFrame()
         data = _sheet.get_all_values()
-        if len(data) < 2: return pd.DataFrame()
+        if not data: return pd.DataFrame()
         headers = [str(h).strip() for h in data[0]]
+        # 🟢 THE FIX: If there are only headers and no data yet, keep the headers!
+        if len(data) == 1: return pd.DataFrame(columns=headers)
         df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
         return df
     except: return pd.DataFrame()
@@ -213,8 +215,9 @@ def fetch_orders_cache(_sheet):
     try:
         if _sheet is None: return pd.DataFrame()
         data = _sheet.get_all_values()
-        if len(data) < 2: return pd.DataFrame()
+        if not data: return pd.DataFrame()
         headers = [str(h).strip() for h in data[0]]
+        if len(data) == 1: return pd.DataFrame(columns=headers)
         df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
         return df
     except: return pd.DataFrame()
@@ -224,8 +227,9 @@ def fetch_rent_cache(_sheet):
     try:
         if _sheet is None: return pd.DataFrame()
         data = _sheet.get_all_values()
-        if len(data) < 2: return pd.DataFrame()
+        if not data: return pd.DataFrame()
         headers = [str(h).strip() for h in data[0]]
+        if len(data) == 1: return pd.DataFrame(columns=headers)
         df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
         return df
     except: return pd.DataFrame()
@@ -1035,6 +1039,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
