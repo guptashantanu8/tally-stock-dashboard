@@ -1038,27 +1038,38 @@ elif page == "🏢 Rent Tracker":
                     st.info("No active tenants to bill.")
 
         # TAB 4: TRANSACTION HISTORY
+        # TAB 4: TRANSACTION HISTORY
         with tab4:
             st.subheader("Ledger History")
             if not df_tenants.empty and not df_tx.empty:
-                # 🟢 FIX 4: PERFECTLY MATCH DROPDOWN NAMES WITH DATABASE NAMES
+                # 🟢 Safety: Clean headers to remove invisible spaces
+                df_tx.columns = df_tx.columns.str.strip()
+                
+                # Check what columns actually exist
+                available_cols = df_tx.columns.tolist()
+                
+                # Setup Tenant Filter
                 clean_tenant_list = df_tenants['Name'].astype(str).str.strip().tolist()
                 hist_tenant = st.selectbox("View History For:", ["All Tenants"] + clean_tenant_list)
                 
                 hist_df = df_tx.copy()
-                hist_df['Tenant Name'] = hist_df['Tenant Name'].astype(str).str.strip()
                 
-                if hist_tenant != "All Tenants" and 'Tenant Name' in hist_df.columns:
-                    hist_df = hist_df[hist_df['Tenant Name'] == hist_tenant]
+                # 🟢 Only filter if the column 'Tenant Name' exists in your sheet
+                if 'Tenant Name' in available_cols:
+                    hist_df['Tenant Name'] = hist_df['Tenant Name'].astype(str).str.strip()
+                    if hist_tenant != "All Tenants":
+                        hist_df = hist_df[hist_df['Tenant Name'] == hist_tenant]
                 
-                hist_df = hist_df.dropna(how='all')
-                hist_df = hist_df.iloc[::-1]
+                hist_df = hist_df.dropna(how='all').iloc[::-1]
                 
-                if 'Type' in hist_df.columns:
+                # 🟢 Color code only if 'Type' exists
+                if 'Type' in available_cols:
                     hist_df['Type'] = hist_df['Type'].astype(str).str.strip()
                     st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
                 else:
                     st.dataframe(hist_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No transaction history found. Please check your 'Rent Transactions' sheet headers.")
 
         # TAB 5: MANAGE TENANTS (Add/Edit)
         with tab5:
@@ -1154,6 +1165,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
