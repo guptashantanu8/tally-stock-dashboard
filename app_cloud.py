@@ -115,7 +115,20 @@ def get_gspread_client():
 
         stock_sheet = db.sheet1
 
-        return stock_sheet, db.worksheet("Orders"), db.worksheet("Users"), db.worksheet("Restock Times"), db.worksheet("Weekly Snapshots"), db.worksheet("15-Day Sales"), db.worksheet("Customers"), audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet
+        # 🟢 THE FIX: Explicitly name every single sheet so Python doesn't guess
+        return (
+            db.worksheet("Tally Live Stock"), # stock_sheet
+            db.worksheet("Orders"), 
+            db.worksheet("Users"), 
+            db.worksheet("Restock Times"), 
+            db.worksheet("Weekly Snapshots"), 
+            db.worksheet("15-Day Sales"), 
+            db.worksheet("Customers"), 
+            db.worksheet("Audit Logs"), 
+            db.worksheet("Master Items"), 
+            db.worksheet("Tenants"), 
+            db.worksheet("Rent Transactions") # This MUST match the tab name exactly
+        )
     except Exception as e:
         return None, None, None, None, None, None, None, None, None, None, None
 
@@ -914,6 +927,7 @@ elif page == "🏢 Rent Tracker":
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
