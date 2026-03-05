@@ -845,30 +845,30 @@ elif page == "🏢 Rent Tracker":
     if tenants_sheet is None or rent_tx_sheet is None:
         st.error("⚠️ Database Error: Sheets not found.")
     else:
-        # 1. Fetch raw data
         df_tenants = fetch_rent_cache(tenants_sheet).copy()
         df_tx = fetch_rent_cache(rent_tx_sheet).copy()
 
-        # 2. Hard Clean: Remove empty rows and strip spaces from headers
         df_tenants = df_tenants.dropna(how='all').reset_index(drop=True)
         df_tenants.columns = df_tenants.columns.str.strip()
         
         df_tx = df_tx.dropna(how='all').reset_index(drop=True)
         df_tx.columns = df_tx.columns.str.strip()
 
-        # 3. Calculation Engine (Now with Fuzzy Matching)
+        # 🟢 THE SELF-HEALING CHECK
+        required_cols = ['Tenant Name', 'Type', 'Amount']
+        missing_cols = [c for c in required_cols if c not in df_tx.columns]
+
         balances = {}
-        if not df_tenants.empty and not df_tx.empty:
-            # Clean columns for comparison
+        if missing_cols:
+            st.error(f"⚠️ Column Headers Missing in 'Rent Transactions' sheet: {', '.join(missing_cols)}")
+            st.info(f"The app found these headers instead: {df_tx.columns.tolist()}")
+        elif not df_tenants.empty and not df_tx.empty:
             tx_clean = df_tx.copy()
-            for col in ['Tenant Name', 'Type', 'Amount']:
-                if col in tx_clean.columns:
-                    tx_clean[col] = tx_clean[col].astype(str).str.strip()
+            tx_clean['Tenant Name'] = tx_clean['Tenant Name'].astype(str).str.strip()
+            tx_clean['Type'] = tx_clean['Type'].astype(str).str.strip()
             
-            # Numeric conversion
-            if 'Amount' in tx_clean.columns:
-                tx_clean['Amt_Num'] = tx_clean['Amount'].str.replace(r'[^\d.]', '', regex=True)
-                tx_clean['Amt_Num'] = pd.to_numeric(tx_clean['Amt_Num'], errors='coerce').fillna(0)
+            tx_clean['Amt_Num'] = tx_clean['Amount'].astype(str).str.replace(r'[^\d.]', '', regex=True)
+            tx_clean['Amt_Num'] = pd.to_numeric(tx_clean['Amt_Num'], errors='coerce').fillna(0)
 
             for t_name in df_tenants['Name'].dropna().unique():
                 name_strip = str(t_name).strip()
@@ -891,33 +891,30 @@ elif page == "🏢 Rent Tracker":
 
         with tab4:
             st.subheader("All Recorded Transactions")
-            if df_tx.empty:
-                st.info("No transactions found in the Google Sheet.")
-            else:
-                st.write("Below is every row found in your 'Rent Transactions' sheet:")
-                st.dataframe(df_tx, use_container_width=True)
+            st.dataframe(df_tx, use_container_width=True)
 
-        # (Keeping Tab 2, 3, 5 same as previous for data entry)
+        # Helper forms for data entry
         with tab2:
-            with st.form("p_f"):
+            with st.form("p_f", clear_on_submit=True):
                 p_t = st.selectbox("Tenant", df_tenants['Name'].tolist()) if not df_tenants.empty else None
-                p_a = st.number_input("Amount")
+                p_a = st.number_input("Amount", min_value=0.0)
                 if st.form_submit_button("Save Payment"):
-                    rent_tx_sheet.append_row([datetime.now(IST).strftime("%Y-%m-%d %H:%M"), p_t, "Payment", "Rent", p_a, "", "Received", st.session_state.user_name])
+                    rent_tx_sheet.append_row([datetime.now(IST).strftime("%d-%m-%Y %H:%M"), p_t, "Payment", "Rent", p_a, "", "Received", st.session_state.user_name])
                     fetch_rent_cache.clear(); st.rerun()
         with tab3:
-            with st.form("b_f"):
+            with st.form("b_f", clear_on_submit=True):
                 b_t = st.selectbox("Tenant", df_tenants['Name'].tolist()) if not df_tenants.empty else None
-                b_a = st.number_input("Bill Amount")
+                b_a = st.number_input("Bill Amount", min_value=0.0)
                 if st.form_submit_button("Log Bill"):
-                    rent_tx_sheet.append_row([datetime.now(IST).strftime("%Y-%m-%d %H:%M"), b_t, "Charge", "Rent", b_a, "", "Monthly Bill", st.session_state.user_name])
+                    rent_tx_sheet.append_row([datetime.now(IST).strftime("%d-%m-%Y %H:%M"), b_t, "Charge", "Rent", b_a, "", "Monthly Bill", st.session_state.user_name])
                     fetch_rent_cache.clear(); st.rerun()
         with tab5:
-            with st.form("t_f"):
+            with st.form("t_f", clear_on_submit=True):
                 n = st.text_input("Name"); l = st.text_input("Unit"); r = st.number_input("Rent")
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
