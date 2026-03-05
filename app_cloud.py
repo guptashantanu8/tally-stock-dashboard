@@ -220,7 +220,7 @@ def fetch_cached_data(cache_key, _sheet):
     except Exception as e:
         return pd.DataFrame()
 
-# 🟢 THE FIX: We securely pass the "LiveStock" name tag first!
+# 🟢 THE CRITICAL FIX IS THIS EXACT LINE:
 df = fetch_cached_data("LiveStock", stock_sheet)
 
 if not df.empty and 'Quantity' in df.columns:
@@ -1047,6 +1047,7 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
 
 
 
