@@ -428,12 +428,15 @@ elif page == "📝 Order Desk":
                 order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 try:
+                    # 1. Save to Google Sheets
                     orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
-                    st.success(f"✅ Order {order_id} placed! Sending alert...")
                     
+                    # 2. Telegram Alert with Error Reporting
+                    tg_success = False
                     try:
                         tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                         tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+                        
                         if tg_token and tg_chat_id:
                             items_array = details_str.split(" | ")
                             table_text = "━━━━━━━━━━━━━━━━━━━━\n"
@@ -451,19 +454,35 @@ elif page == "📝 Order Desk":
                             alert_text += f"\n✅ Placed By: {st.session_state.user_name}"
                             
                             encoded_text = urllib.parse.quote(alert_text)
-                            requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}")
-                    except Exception as tg_e:
-                        pass
-                    
-                    keys_to_clear = ["order_cust_drop", "order_cust_text", "order_notes", "order_items"]
-                    for item in selected_items:
-                        keys_to_clear.extend([f"p_{item}", f"a_{item}", f"u_{item}"])
-                    
-                    for key in keys_to_clear:
-                        if key in st.session_state:
-                            del st.session_state[key]
+                            url = f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}"
                             
-                    time.sleep(1.5)
+                            # Actually check Telegram's response!
+                            res = requests.get(url)
+                            if res.status_code == 200:
+                                tg_success = True
+                            else:
+                                st.error(f"⚠️ Order saved, but Telegram failed: {res.text}")
+                        else:
+                            st.error("⚠️ Telegram keys are missing from Streamlit Secrets.")
+                    except Exception as tg_e:
+                        st.error(f"⚠️ Telegram System Error: {tg_e}")
+                    
+                    if tg_success:
+                        st.success(f"✅ Order {order_id} placed and alert sent to Warehouse!")
+                    else:
+                        st.success(f"✅ Order {order_id} placed successfully!")
+
+                    # 3. INSTANT Form Clear (Force Overwrite)
+                    st.session_state["order_cust_drop"] = None
+                    st.session_state["order_cust_text"] = ""
+                    st.session_state["order_notes"] = ""
+                    st.session_state["order_items"] = []
+                    for item in selected_items:
+                        st.session_state[f"p_{item}"] = 1.0
+                        st.session_state[f"a_{item}"] = 0.0
+                        st.session_state[f"u_{item}"] = ""
+                        
+                    time.sleep(2) # Give the user time to read the success message
                     st.rerun()
                 except Exception as e: 
                     st.error(f"Error saving order: {e}")
@@ -1016,3 +1035,4 @@ elif page == "🏢 Rent Tracker":
                                 st.rerun()
                         else:
                             st.info("Only Admins can delete tenants. Contact Admin for removal.")
+
