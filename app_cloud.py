@@ -970,13 +970,20 @@ elif page == "🏢 Rent Tracker":
                         
                         units = 0.0
                         new_meter = 0.0
+                        e_amt_final = 0.0
                         
-                        if str(t_data.get('Elec Paid By', '')) == 'Company/Landlord':
+                        if str(t_data.get('Elec Paid By', '')) == 'Company/Landlord' and e_type not in ['Fixed', 'Direct Bill (Lump Sum)']:
                             st.info("Electricity is covered by the Landlord/Company.")
                             charge_elec = False
-                        elif e_type == 'Fixed':
-                            charge_elec = st.checkbox(f"Apply Fixed Electricity (₹{e_rate})", value=True)
-                        elif e_type == 'Variable':
+                        
+                        # 🟢 THE NEW LUMP-SUM LOGIC
+                        elif e_type in ['Fixed', 'Direct Bill (Lump Sum)']:
+                            st.info("💡 Enter the exact meter bill amount you paid for them.")
+                            e_amt_input = st.number_input("Lump Sum Electricity Bill (₹)", min_value=0.0, step=100.0, value=0.0)
+                            charge_elec = st.checkbox("Pass-through Bill to Tenant Ledger", value=True)
+                            e_amt_final = e_amt_input
+                            
+                        elif e_type in ['Variable', 'Variable (Meter)']:
                             try: prev_meter = float(t_data.get('Meter Reading', 0.0))
                             except (ValueError, TypeError): prev_meter = 0.0
                             
@@ -985,11 +992,12 @@ elif page == "🏢 Rent Tracker":
                             units = new_meter - prev_meter
                             st.write(f"**Calculated Usage:** {units} units (Rate: ₹{e_rate})")
                             charge_elec = st.checkbox("Apply Variable Electricity", value=True)
+                            e_amt_final = e_rate * units
                         else:
                             st.write("No electricity tracking configured.")
                             charge_elec = False
 
-                    bill_notes = st.text_input("Billing Month / Notes (e.g., 'March 2026 Rent')", key="bill_n")
+                    bill_notes = st.text_input("Billing Month / Notes (e.g., 'March 2026 Rent + Electricity')", key="bill_n")
 
                     if st.button("📝 Post Charges to Ledger", type="primary"):
                         timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
@@ -997,13 +1005,11 @@ elif page == "🏢 Rent Tracker":
                             if charge_rent:
                                 rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Rent", base_rent, "", bill_notes, st.session_state.user_name])
                             
-                            if charge_elec:
-                                e_amt = e_rate if e_type == 'Fixed' else (e_rate * units)
-                                if e_amt > 0:
-                                    rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", float(e_amt), float(units), bill_notes, st.session_state.user_name])
-                                    if e_type == 'Variable':
-                                        t_cell = tenants_sheet.find(str(t_data['Tenant ID']))
-                                        tenants_sheet.update_cell(t_cell.row, 8, float(new_meter))
+                            if charge_elec and e_amt_final > 0:
+                                rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", float(e_amt_final), float(units) if units > 0 else "", bill_notes, st.session_state.user_name])
+                                if e_type in ['Variable', 'Variable (Meter)']:
+                                    t_cell = tenants_sheet.find(str(t_data['Tenant ID']))
+                                    tenants_sheet.update_cell(t_cell.row, 8, float(new_meter))
                                         
                             st.success("Charges successfully posted to the tenant's ledger!")
                             fetch_rent_cache.clear()
@@ -1041,12 +1047,13 @@ elif page == "🏢 Rent Tracker":
                     with c2: nt_security = st.number_input("Security Deposit Received (₹)", min_value=0.0, step=500.0)
                     
                     st.write("⚡ **Electricity Configuration**")
-                    nt_etype = st.selectbox("Electricity Billing Type", ["Fixed", "Variable", "None"])
-                    nt_erate = st.number_input("Fixed Amount OR Rate Per Unit (₹)", min_value=0.0, step=1.0)
+                    # 🟢 RENAMED TO DIRECT LUMP SUM BILL
+                    nt_etype = st.selectbox("Electricity Billing Type", ["Direct Bill (Lump Sum)", "Variable (Meter)", "None"])
+                    nt_erate = st.number_input("Rate Per Unit (₹) - Only if Variable", min_value=0.0, step=1.0)
                     nt_epaid = st.selectbox("Electricity Paid By", ["Tenant", "Company/Landlord"])
                     
                     nt_meter = 0.0
-                    if nt_etype == "Variable":
+                    if nt_etype == "Variable (Meter)":
                         nt_meter = st.number_input("Initial Meter Reading (Base Units)", min_value=0.0, step=1.0)
                         
                     st.divider()
@@ -1058,7 +1065,6 @@ elif page == "🏢 Rent Tracker":
                     
                     if st.form_submit_button("Create Tenant Profile", type="primary"):
                         if nt_name:
-                            # Append full 12 columns!
                             tenants_sheet.append_row([t_id, nt_name, nt_loc, float(nt_rent), nt_etype, float(nt_erate), nt_epaid, float(nt_meter), float(nt_security), str(start_date), pr_val, "Active"])
                             
                             if pr_val == "Yes" and nt_rent > 0:
@@ -1095,19 +1101,24 @@ elif page == "🏢 Rent Tracker":
                             with c2: e_rent = st.number_input("Monthly Rent (Increase/Decrease)", value=float(row.get('Rent Amount', 0.0)), step=500.0)
                             
                             e1, e2 = st.columns(2)
-                            with e1: e_rate = st.number_input("Electricity Rate/Fixed Amt", value=float(row.get('Elec Rate', 0.0)), step=1.0)
-                            with e2: e_sec = st.number_input("Security Deposit Held", value=float(row.get('Security Deposit', 0.0)), step=500.0)
+                            old_etype = str(row.get('Electricity Type', 'None'))
+                            etype_idx = 0 if old_etype in ['Fixed', 'Direct Bill (Lump Sum)'] else 1 if old_etype in ['Variable', 'Variable (Meter)'] else 2
                             
-                            s1, s2 = st.columns(2)
-                            with s1: e_prorata = st.selectbox("Pro Rata Billing?", ["Yes", "No"], index=0 if str(row.get('Pro Rata', 'Yes')) == 'Yes' else 1)
-                            with s2: e_status = st.selectbox("Tenant Status", ["Active", "Vacated"], index=0 if curr_status == 'Active' else 1)
+                            # 🟢 YOU CAN NOW CHANGE THE ELECTRICITY TYPE HERE
+                            with e1: e_etype_new = st.selectbox("Elec Type", ["Direct Bill (Lump Sum)", "Variable (Meter)", "None"], index=etype_idx)
+                            with e2: e_rate = st.number_input("Per Unit Rate (If Variable)", value=float(row.get('Elec Rate', 0.0)), step=1.0)
+                            
+                            s1, s2, s3 = st.columns(3)
+                            with s1: e_sec = st.number_input("Security Deposit Held", value=float(row.get('Security Deposit', 0.0)), step=500.0)
+                            with s2: e_prorata = st.selectbox("Pro Rata Billing?", ["Yes", "No"], index=0 if str(row.get('Pro Rata', 'Yes')) == 'Yes' else 1)
+                            with s3: e_status = st.selectbox("Tenant Status", ["Active", "Vacated"], index=0 if curr_status == 'Active' else 1)
                             
                             if st.form_submit_button("💾 Save All Changes", type="primary"):
                                 try:
                                     cell = tenants_sheet.find(str(row['Tenant ID']))
-                                    # Update specific columns without overwriting the meter reading or start date
                                     tenants_sheet.update_cell(cell.row, 3, e_loc)
                                     tenants_sheet.update_cell(cell.row, 4, float(e_rent))
+                                    tenants_sheet.update_cell(cell.row, 5, e_etype_new)
                                     tenants_sheet.update_cell(cell.row, 6, float(e_rate))
                                     tenants_sheet.update_cell(cell.row, 9, float(e_sec))
                                     tenants_sheet.update_cell(cell.row, 11, e_prorata)
