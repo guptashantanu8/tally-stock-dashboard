@@ -860,77 +860,315 @@ elif page == "🏢 Rent Tracker":
     st.title("🏢 Property & Rent Tracker")
     
     if tenants_sheet is None or rent_tx_sheet is None:
-        st.error("⚠️ Database Error: Sheets not found.")
+        st.error("⚠️ Database Error: Sheets not found in Google Sheets.")
     else:
-        df_tenants = fetch_rent_cache(tenants_sheet, "Tenants").copy()
-        df_tx = fetch_rent_cache(rent_tx_sheet, "Rent Transactions").copy()
+        # 1. Fetch data safely using the new named caches
+        df_tenants_raw = fetch_rent_cache(tenants_sheet, "Tenants")
+        df_tx_raw = fetch_rent_cache(rent_tx_sheet, "Rent Transactions")
 
-        df_tenants = df_tenants.dropna(how='all').reset_index(drop=True)
-        df_tenants.columns = df_tenants.columns.str.strip()
-        
-        df_tx = df_tx.dropna(how='all').reset_index(drop=True)
-        df_tx.columns = df_tx.columns.str.strip()
+        df_tenants = df_tenants_raw.copy()
+        df_tx = df_tx_raw.copy()
 
-        # 🟢 THE SELF-HEALING CHECK
-        required_cols = ['Tenant Name', 'Type', 'Amount']
-        missing_cols = [c for c in required_cols if c not in df_tx.columns]
+        # 2. Clean Headers (Remove invisible spaces)
+        if not df_tenants.empty: df_tenants.columns = df_tenants.columns.str.strip()
+        if not df_tx.empty: df_tx.columns = df_tx.columns.str.strip()
 
+        # 3. SAFETY NET: Auto-fill missing new columns so old data doesn't crash the app
+        if not df_tenants.empty:
+            if 'Billing Start Date' not in df_tenants.columns: df_tenants['Billing Start Date'] = datetime.now(IST).strftime('%Y-%m-%d')
+            if 'Pro Rata' not in df_tenants.columns: df_tenants['Pro Rata'] = 'Yes'
+            if 'Status' not in df_tenants.columns: df_tenants['Status'] = 'Active'
+
+        # 4. BULLETPROOF MATH CALCULATION
         balances = {}
-        if missing_cols:
-            st.error(f"⚠️ Column Headers Missing in 'Rent Transactions' sheet: {', '.join(missing_cols)}")
-            st.info(f"The app found these headers instead: {df_tx.columns.tolist()}")
-        elif not df_tenants.empty and not df_tx.empty:
-            tx_clean = df_tx.copy()
-            tx_clean['Tenant Name'] = tx_clean['Tenant Name'].astype(str).str.strip()
-            tx_clean['Type'] = tx_clean['Type'].astype(str).str.strip()
+        if not df_tenants.empty and not df_tx.empty and 'Amount' in df_tx.columns and 'Tenant Name' in df_tx.columns:
+            calc_tx = df_tx.copy()
+            calc_tx['Tenant Name'] = calc_tx['Tenant Name'].astype(str).str.strip()
+            calc_tx['Type'] = calc_tx['Type'].astype(str).str.strip()
             
-            tx_clean['Amt_Num'] = tx_clean['Amount'].astype(str).str.replace(r'[^\d.]', '', regex=True)
-            tx_clean['Amt_Num'] = pd.to_numeric(tx_clean['Amt_Num'], errors='coerce').fillna(0)
-
-            for t_name in df_tenants['Name'].dropna().unique():
-                name_strip = str(t_name).strip()
-                t_tx = tx_clean[tx_clean['Tenant Name'] == name_strip]
+            calc_tx['Safe Amount'] = calc_tx['Amount'].astype(str).str.replace(r'[^\d.]', '', regex=True)
+            calc_tx['Safe Amount'] = pd.to_numeric(calc_tx['Safe Amount'], errors='coerce').fillna(0.0)
+            
+            clean_tenants = df_tenants['Name'].astype(str).str.strip().dropna().unique()
+            
+            for t_name in clean_tenants:
+                t_tx = calc_tx[calc_tx['Tenant Name'] == t_name]
+                charges = t_tx[t_tx['Type'].str.contains('Charge', case=False, na=False)]['Safe Amount'].sum()
+                payments = t_tx[t_tx['Type'].str.contains('Payment', case=False, na=False)]['Safe Amount'].sum()
+                balances[t_name] = charges - payments
                 
-                charges = t_tx[t_tx['Type'].str.contains('Charge', case=False, na=False)]['Amt_Num'].sum()
-                payments = t_tx[t_tx['Type'].str.contains('Payment', case=False, na=False)]['Amt_Num'].sum()
-                balances[name_strip] = charges - payments
+        elif not df_tenants.empty and 'Name' in df_tenants.columns:
+            for t_name in df_tenants['Name'].astype(str).str.strip().dropna().unique(): 
+                balances[t_name] = 0.0
 
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances & Dashboard", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
+        # TAB 1: DASHBOARD & BALANCES
         with tab1:
-            st.subheader("Current Pending Balances")
+            if not df_tenants.empty:
+                active_tenants = df_tenants[df_tenants['Status'] == 'Active']
+                vacated_tenants = df_tenants[df_tenants['Status'] == 'Vacated']
+                today = datetime.now(IST).date()
+                
+                # SMART BILLING REMINDER SYSTEM
+                reminders = []
+                for idx, row in active_tenants.iterrows():
+                    pr_status = str(row.get('Pro Rata', 'Yes')).strip()
+                    sd_str = str(row.get('Billing Start Date', str(today)))
+                    try: sd_date = datetime.strptime(sd_str, "%Y-%m-%d").date()
+                    except: sd_date = today
+                    
+                    due_day = 1 if pr_status == 'Yes' else sd_date.day
+                    if today.day == due_day:
+                        reminders.append(str(row['Name']).strip())
+                
+                if reminders:
+                    st.error(f"🚨 **ACTION REQUIRED TODAY:** Generate Monthly Bills for: **{', '.join(reminders)}**")
+                
+                st.subheader("🟢 Active Tenants")
+                if active_tenants.empty: st.info("No active tenants right now.")
+                
+                for idx, row in active_tenants.iterrows():
+                    t_name = str(row['Name']).strip()
+                    bal = balances.get(t_name, 0.0)
+                    status_color = "#dc3545" if bal > 0 else "#10b981"
+                    status_text = f"DUE: ₹{bal:,.2f}" if bal > 0 else "CLEARED"
+                    
+                    try: sec_dep = float(row.get('Security Deposit', 0.0))
+                    except (ValueError, TypeError): sec_dep = 0.0
+                    
+                    pr_txt = "1st of Month" if str(row.get('Pro Rata', 'Yes')).strip() == 'Yes' else f"Date {datetime.strptime(str(row.get('Billing Start Date', str(today))), '%Y-%m-%d').day} of Month"
+                    
+                    st.markdown(f"""
+                    <div class="order-card">
+                        <h4 style="margin:0; color:#333;">{t_name} <span style="float:right; color:{status_color};">{status_text}</span></h4>
+                        <p style="margin:5px 0 0 0; color:#64748b;">
+                            📍 {row.get('Location', 'N/A')} | 🏠 Rent: ₹{row.get('Rent Amount', 0)} | ⚡ Elec: {row.get('Electricity Type', 'N/A')}<br>
+                            <span style="color: #0284c7; font-weight: 500;">🛡️ Security: ₹{sec_dep:,.2f}</span> | 📅 Cycle: {pr_txt}
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                if not vacated_tenants.empty:
+                    with st.expander("🚪 View Vacated Tenants"):
+                        for idx, row in vacated_tenants.iterrows():
+                            t_name = str(row['Name']).strip()
+                            bal = balances.get(t_name, 0.0)
+                            color = "#dc3545" if bal > 0 else "#6c757d"
+                            txt = f"PENDING DUES: ₹{bal:,.2f}" if bal > 0 else "SETTLED"
+                            st.markdown(f"**{t_name}** | {row.get('Location', '')} | <span style='color:{color}'>{txt}</span>", unsafe_allow_html=True)
+            else:
+                st.info("No tenants found. Add one in the 'Manage Tenants' tab.")
+
+        # TAB 2: COLLECT PAYMENT
+        with tab2:
+            st.subheader("Record a Received Payment")
+            if not df_tenants.empty:
+                with st.form("payment_form", clear_on_submit=True):
+                    clean_tenant_names = df_tenants['Name'].astype(str).str.strip().tolist()
+                    p_tenant = st.selectbox("Select Tenant", clean_tenant_names)
+                    p_amt = st.number_input("Payment Amount Received (₹)", min_value=1.0, step=100.0)
+                    p_notes = st.text_input("Notes (e.g. Cash, UPI Reference, Final Settlement)")
+                    
+                    if st.form_submit_button("💾 Save Payment", type="primary"):
+                        timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
+                        rent_tx_sheet.append_row([timestamp, p_tenant, "Payment", "Rent", float(p_amt), "", p_notes, st.session_state.user_name])
+                        st.success(f"Payment of ₹{p_amt} recorded for {p_tenant}!")
+                        fetch_rent_cache.clear()
+                        time.sleep(1)
+                        st.rerun()
+
+        # TAB 3: LOG BILLS (RENT & ELECTRICITY)
+        with tab3:
+            st.subheader("Generate Monthly Charges")
+            if not df_tenants.empty:
+                active_only = df_tenants[df_tenants['Status'] == 'Active'].copy()
+                if not active_only.empty:
+                    active_only['Name'] = active_only['Name'].astype(str).str.strip()
+                    bill_tenant = st.selectbox("Select Tenant to Bill", active_only['Name'].tolist(), key="bill_t")
+                    t_data = active_only[active_only['Name'] == bill_tenant].iloc[0]
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown("##### 🏠 Rent Charge")
+                        try: base_rent = float(t_data.get('Rent Amount', 0.0))
+                        except (ValueError, TypeError): base_rent = 0.0
+                        charge_rent = st.checkbox(f"Apply Base Rent (₹{base_rent})", value=True)
+                    
+                    with c2:
+                        st.markdown("##### ⚡ Electricity Charge")
+                        e_type = str(t_data.get('Electricity Type', 'None')).strip()
+                        try: e_rate = float(t_data.get('Elec Rate', 0.0))
+                        except (ValueError, TypeError): e_rate = 0.0
+                        
+                        units = 0.0
+                        new_meter = 0.0
+                        e_amt_final = 0.0
+                        
+                        if str(t_data.get('Elec Paid By', '')).strip() == 'Company/Landlord' and e_type not in ['Fixed', 'Direct Bill (Lump Sum)']:
+                            st.info("Electricity is covered by the Landlord/Company.")
+                            charge_elec = False
+                            
+                        elif e_type in ['Fixed', 'Direct Bill (Lump Sum)']:
+                            st.info("💡 Enter the exact meter bill amount you paid for them.")
+                            e_amt_input = st.number_input("Lump Sum Electricity Bill (₹)", min_value=0.0, step=100.0, value=0.0)
+                            charge_elec = st.checkbox("Pass-through Bill to Tenant Ledger", value=True)
+                            e_amt_final = e_amt_input
+                            
+                        elif e_type in ['Variable', 'Variable (Meter)']:
+                            try: prev_meter = float(t_data.get('Meter Reading', 0.0))
+                            except (ValueError, TypeError): prev_meter = 0.0
+                            
+                            st.info(f"Last Recorded Meter: **{prev_meter}**")
+                            new_meter = st.number_input(f"Enter Current Meter Reading", min_value=prev_meter, step=1.0, value=prev_meter)
+                            units = new_meter - prev_meter
+                            st.write(f"**Calculated Usage:** {units} units (Rate: ₹{e_rate})")
+                            charge_elec = st.checkbox("Apply Variable Electricity", value=True)
+                            e_amt_final = e_rate * units
+                        else:
+                            st.write("No electricity tracking configured.")
+                            charge_elec = False
+
+                    bill_notes = st.text_input("Billing Month / Notes (e.g., 'March 2026 Rent')", key="bill_n")
+
+                    if st.button("📝 Post Charges to Ledger", type="primary"):
+                        timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
+                        try:
+                            if charge_rent:
+                                rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Rent", base_rent, "", bill_notes, st.session_state.user_name])
+                            
+                            if charge_elec and e_amt_final > 0:
+                                rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", float(e_amt_final), float(units) if units > 0 else "", bill_notes, st.session_state.user_name])
+                                if e_type in ['Variable', 'Variable (Meter)']:
+                                    t_cell = tenants_sheet.find(str(t_data['Tenant ID']))
+                                    tenants_sheet.update_cell(t_cell.row, 8, float(new_meter))
+                                        
+                            st.success("Charges successfully posted to the tenant's ledger!")
+                            fetch_rent_cache.clear()
+                            time.sleep(1.5)
+                            st.rerun()
+                        except Exception as e: st.error(f"Error posting charges: {e}")
+                else:
+                    st.info("No active tenants to bill.")
+
+        # TAB 4: TRANSACTION HISTORY
+        with tab4:
+            st.subheader("Ledger History")
+            if not df_tenants.empty and not df_tx.empty and 'Tenant Name' in df_tx.columns:
+                clean_tenant_list = df_tenants['Name'].astype(str).str.strip().tolist()
+                hist_tenant = st.selectbox("View History For:", ["All Tenants"] + clean_tenant_list)
+                
+                hist_df = df_tx.copy()
+                hist_df['Tenant Name'] = hist_df['Tenant Name'].astype(str).str.strip()
+                
+                if hist_tenant != "All Tenants":
+                    hist_df = hist_df[hist_df['Tenant Name'] == hist_tenant]
+                
+                hist_df = hist_df.dropna(how='all')
+                hist_df = hist_df.iloc[::-1]
+                
+                if 'Type' in hist_df.columns:
+                    hist_df['Type'] = hist_df['Type'].astype(str).str.strip()
+                    st.dataframe(hist_df.style.map(lambda x: 'color: #dc3545; font-weight:bold;' if x == 'Charge' else 'color: #10b981; font-weight:bold;' if x == 'Payment' else '', subset=['Type']), use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(hist_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No transaction history available yet.")
+
+        # TAB 5: MANAGE TENANTS (Add/Edit)
+        with tab5:
+            with st.expander("➕ Add New Tenant", expanded=False):
+                with st.form("add_tenant_form", clear_on_submit=True):
+                    t_id = f"T-{uuid.uuid4().hex[:6].upper()}"
+                    nt_name = st.text_input("Tenant/Company Name")
+                    nt_loc = st.text_input("Location / Unit Number")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1: nt_rent = st.number_input("Monthly Base Rent (₹)", min_value=0.0, step=500.0)
+                    with c2: nt_security = st.number_input("Security Deposit Received (₹)", min_value=0.0, step=500.0)
+                    
+                    st.write("⚡ **Electricity Configuration**")
+                    nt_etype = st.selectbox("Electricity Billing Type", ["Direct Bill (Lump Sum)", "Variable (Meter)", "None"])
+                    nt_erate = st.number_input("Rate Per Unit (₹) - Only if Variable", min_value=0.0, step=1.0)
+                    nt_epaid = st.selectbox("Electricity Paid By", ["Tenant", "Company/Landlord"])
+                    
+                    nt_meter = 0.0
+                    if nt_etype == "Variable (Meter)":
+                        nt_meter = st.number_input("Initial Meter Reading (Base Units)", min_value=0.0, step=1.0)
+                        
+                    st.divider()
+                    st.write("📅 **Billing Cycle & Move-In**")
+                    k1, k2 = st.columns(2)
+                    with k1: start_date = st.date_input("Date Keys Given (Billing Start)")
+                    with k2: apply_prorata = st.selectbox("Billing Logic", ["Pro-Rata (Bill on 1st of every month)", "Fixed Cycle (Bill on Anniversary Date)"])
+                    pr_val = "Yes" if "Pro-Rata" in apply_prorata else "No"
+                    
+                    if st.form_submit_button("Create Tenant Profile", type="primary"):
+                        if nt_name:
+                            tenants_sheet.append_row([t_id, nt_name, nt_loc, float(nt_rent), nt_etype, float(nt_erate), nt_epaid, float(nt_meter), float(nt_security), str(start_date), pr_val, "Active"])
+                            
+                            if pr_val == "Yes" and nt_rent > 0:
+                                now = datetime.now(IST)
+                                days_in_month = calendar.monthrange(now.year, now.month)[1]
+                                days_active = days_in_month - start_date.day + 1
+                                pro_rata_rent = round((float(nt_rent) / days_in_month) * days_active, 2)
+                                
+                                timestamp = now.strftime("%d-%m-%Y %I:%M %p")
+                                rent_tx_sheet.append_row([
+                                    timestamp, nt_name, "Charge", "Rent (Pro-Rata)", float(pro_rata_rent), "",
+                                    f"Pro-rata rent for {days_active} days in {now.strftime('%b %Y')}", st.session_state.user_name
+                                ])
+                                st.success(f"Tenant added! First pro-rata rent of ₹{pro_rata_rent} automatically charged.")
+                            else:
+                                st.success(f"Tenant added! Billing set to exactly the {start_date.day} of every month.")
+                                
+                            fetch_rent_cache.clear()
+                            time.sleep(2)
+                            st.rerun()
+                        else: st.error("Name is required.")
+            
+            st.markdown("### ⚙️ Edit / Vacate Existing Tenants")
             if not df_tenants.empty:
                 for idx, row in df_tenants.iterrows():
-                    t_name = str(row['Name']).strip()
-                    bal = balances.get(t_name, 0)
-                    status_color = "#dc3545" if bal > 0 else "#10b981"
-                    st.markdown(f'<div class="order-card"><b>{t_name}</b> <span style="float:right; color:{status_color};">Pending: ₹{bal:,.2f}</span></div>', unsafe_allow_html=True)
-
-        with tab4:
-            st.subheader("All Recorded Transactions")
-            st.dataframe(df_tx, use_container_width=True)
-
-        # Helper forms for data entry
-        with tab2:
-            with st.form("p_f", clear_on_submit=True):
-                p_t = st.selectbox("Tenant", df_tenants['Name'].tolist()) if not df_tenants.empty else None
-                p_a = st.number_input("Amount", min_value=0.0)
-                if st.form_submit_button("Save Payment"):
-                    rent_tx_sheet.append_row([datetime.now(IST).strftime("%d-%m-%Y %H:%M"), p_t, "Payment", "Rent", p_a, "", "Received", st.session_state.user_name])
-                    fetch_rent_cache.clear(); st.rerun()
-        with tab3:
-            with st.form("b_f", clear_on_submit=True):
-                b_t = st.selectbox("Tenant", df_tenants['Name'].tolist()) if not df_tenants.empty else None
-                b_a = st.number_input("Bill Amount", min_value=0.0)
-                if st.form_submit_button("Log Bill"):
-                    rent_tx_sheet.append_row([datetime.now(IST).strftime("%d-%m-%Y %H:%M"), b_t, "Charge", "Rent", b_a, "", "Monthly Bill", st.session_state.user_name])
-                    fetch_rent_cache.clear(); st.rerun()
-        with tab5:
-            with st.form("t_f", clear_on_submit=True):
-                n = st.text_input("Name"); l = st.text_input("Unit"); r = st.number_input("Rent")
-                if st.form_submit_button("Add Tenant"):
-                    tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
-                    fetch_rent_cache.clear(); st.rerun()
+                    curr_status = str(row.get('Status', 'Active')).strip()
+                    icon = "🟢" if curr_status == 'Active' else "🚪"
+                    with st.expander(f"{icon} {row['Name']} ({row.get('Location', '')})"):
+                        with st.form(f"edit_form_{idx}"):
+                            st.write("**Modify Details or Process Move-Out**")
+                            
+                            c1, c2 = st.columns(2)
+                            with c1: e_loc = st.text_input("Location", str(row.get('Location', '')))
+                            with c2: e_rent = st.number_input("Monthly Rent (Increase/Decrease)", value=float(row.get('Rent Amount', 0.0)), step=500.0)
+                            
+                            e1, e2 = st.columns(2)
+                            old_etype = str(row.get('Electricity Type', 'None')).strip()
+                            etype_idx = 0 if old_etype in ['Fixed', 'Direct Bill (Lump Sum)'] else 1 if old_etype in ['Variable', 'Variable (Meter)'] else 2
+                            
+                            with e1: e_etype_new = st.selectbox("Elec Type", ["Direct Bill (Lump Sum)", "Variable (Meter)", "None"], index=etype_idx)
+                            with e2: e_rate = st.number_input("Per Unit Rate (If Variable)", value=float(row.get('Elec Rate', 0.0)), step=1.0)
+                            
+                            s1, s2, s3 = st.columns(3)
+                            with s1: e_sec = st.number_input("Security Deposit Held", value=float(row.get('Security Deposit', 0.0)), step=500.0)
+                            with s2: e_prorata = st.selectbox("Pro Rata Billing?", ["Yes", "No"], index=0 if str(row.get('Pro Rata', 'Yes')).strip() == 'Yes' else 1)
+                            with s3: e_status = st.selectbox("Tenant Status", ["Active", "Vacated"], index=0 if curr_status == 'Active' else 1)
+                            
+                            if st.form_submit_button("💾 Save All Changes", type="primary"):
+                                try:
+                                    cell = tenants_sheet.find(str(row['Tenant ID']))
+                                    tenants_sheet.update_cell(cell.row, 3, e_loc)
+                                    tenants_sheet.update_cell(cell.row, 4, float(e_rent))
+                                    tenants_sheet.update_cell(cell.row, 5, e_etype_new)
+                                    tenants_sheet.update_cell(cell.row, 6, float(e_rate))
+                                    tenants_sheet.update_cell(cell.row, 9, float(e_sec))
+                                    tenants_sheet.update_cell(cell.row, 11, e_prorata)
+                                    tenants_sheet.update_cell(cell.row, 12, e_status)
+                                    
+                                    st.success(f"Tenant profile for {row['Name']} updated!")
+                                    fetch_rent_cache.clear()
+                                    time.sleep(1)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error updating tenant: {e}")
 
 
 
