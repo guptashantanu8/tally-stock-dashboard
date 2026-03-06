@@ -239,7 +239,7 @@ def fetch_orders_cache(_sheet):
     except: return pd.DataFrame()
 
 @st.cache_data(ttl=60)
-def fetch_rent_cache(_sheet): 
+def fetch_rent_cache(_sheet, sheet_name): # 🟢 THE FIX: Added sheet_name so Streamlit doesn't mix them up!
     try:
         if _sheet is None: return pd.DataFrame()
         data = _sheet.get_all_values()
@@ -249,6 +249,7 @@ def fetch_rent_cache(_sheet):
         df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
         return df
     except: return pd.DataFrame()
+    
 
 # 🟢 LOAD INVENTORY SAFELY
 df = fetch_stock_cache(stock_sheet)
@@ -861,8 +862,8 @@ elif page == "🏢 Rent Tracker":
     if tenants_sheet is None or rent_tx_sheet is None:
         st.error("⚠️ Database Error: Sheets not found.")
     else:
-        df_tenants = fetch_rent_cache(tenants_sheet).copy()
-        df_tx = fetch_rent_cache(rent_tx_sheet).copy()
+        df_tenants = fetch_rent_cache(tenants_sheet, "Tenants").copy()
+        df_tx = fetch_rent_cache(rent_tx_sheet, "Rent Transactions").copy()
 
         df_tenants = df_tenants.dropna(how='all').reset_index(drop=True)
         df_tenants.columns = df_tenants.columns.str.strip()
@@ -930,6 +931,7 @@ elif page == "🏢 Rent Tracker":
                 if st.form_submit_button("Add Tenant"):
                     tenants_sheet.append_row([f"T-{uuid.uuid4().hex[:4]}", n, l, r, "None", 0, "Tenant", 0, 0, str(datetime.now().date()), "Yes", "Active"])
                     fetch_rent_cache.clear(); st.rerun()
+
 
 
 
