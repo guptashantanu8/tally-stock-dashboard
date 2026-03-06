@@ -904,6 +904,7 @@ elif page == "🏢 Rent Tracker":
         tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Balances & Dashboard", "💸 Collect Payment", "⚡ Log Bills", "📜 History", "⚙️ Manage Tenants"])
 
         # TAB 1: DASHBOARD & BALANCES
+        # TAB 1: DASHBOARD & BALANCES
         with tab1:
             if not df_tenants.empty:
                 active_tenants = df_tenants[df_tenants['Status'] == 'Active']
@@ -931,8 +932,17 @@ elif page == "🏢 Rent Tracker":
                 for idx, row in active_tenants.iterrows():
                     t_name = str(row['Name']).strip()
                     bal = balances.get(t_name, 0.0)
-                    status_color = "#dc3545" if bal > 0 else "#10b981"
-                    status_text = f"DUE: ₹{bal:,.2f}" if bal > 0 else "CLEARED"
+                    
+                    # 🟢 THE NEW ADVANCE LOGIC
+                    if bal > 0:
+                        status_color = "#dc3545" # Red
+                        status_text = f"DUE: ₹{bal:,.2f}"
+                    elif bal < 0:
+                        status_color = "#0284c7" # Blue
+                        status_text = f"ADVANCE: ₹{abs(bal):,.2f}"
+                    else:
+                        status_color = "#10b981" # Green
+                        status_text = "CLEARED"
                     
                     try: sec_dep = float(row.get('Security Deposit', 0.0))
                     except (ValueError, TypeError): sec_dep = 0.0
@@ -954,8 +964,18 @@ elif page == "🏢 Rent Tracker":
                         for idx, row in vacated_tenants.iterrows():
                             t_name = str(row['Name']).strip()
                             bal = balances.get(t_name, 0.0)
-                            color = "#dc3545" if bal > 0 else "#6c757d"
-                            txt = f"PENDING DUES: ₹{bal:,.2f}" if bal > 0 else "SETTLED"
+                            
+                            # 🟢 ADVANCE LOGIC FOR VACATED TENANTS (Refunds)
+                            if bal > 0:
+                                color = "#dc3545"
+                                txt = f"PENDING DUES: ₹{bal:,.2f}"
+                            elif bal < 0:
+                                color = "#0284c7"
+                                txt = f"REFUND DUE: ₹{abs(bal):,.2f}"
+                            else:
+                                color = "#6c757d"
+                                txt = "SETTLED"
+                                
                             st.markdown(f"**{t_name}** | {row.get('Location', '')} | <span style='color:{color}'>{txt}</span>", unsafe_allow_html=True)
             else:
                 st.info("No tenants found. Add one in the 'Manage Tenants' tab.")
@@ -1169,6 +1189,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
