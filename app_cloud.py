@@ -254,12 +254,17 @@ def fetch_rent_cache(_sheet, sheet_name): # 🟢 THE FIX: Added sheet_name so St
 # 🟢 LOAD INVENTORY SAFELY
 df = fetch_stock_cache(stock_sheet)
 
-if not df.empty and 'Quantity' in df.columns:
+# 🟢 THE FIX: Global Safety Net to prevent KeyErrors across all pages
+if not df.empty and 'Quantity' in df.columns and 'Item Name' in df.columns:
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+    if 'Unit' not in df.columns: df['Unit'] = 'units'
     df['Unit'] = df['Unit'].fillna('units')
     df['Item'] = df['Item Name']
     if 'Group' not in df.columns: df['Group'] = 'Default'
     df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
+else:
+    # If the sheet is empty or syncing, load a blank template so the app doesn't crash
+    df = pd.DataFrame(columns=['Group', 'Item', 'Quantity', 'Unit', 'Display Qty'])
 
 def generate_html_table(details_str):
     items = details_str.split(" | ")
@@ -664,7 +669,10 @@ elif page == "🔍 Stock Audit":
     st.title("🔍 Physical Stock Audit")
     
     with st.expander("👀 View Current System Quantities (Live Tally Stock)"):
-        st.dataframe(df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Group", "Quantity"], ascending=[True, False]), use_container_width=True, hide_index=True)
+        if not df.empty and all(c in df.columns for c in ['Group', 'Item', 'Quantity', 'Unit']):
+            st.dataframe(df[['Group', 'Item', 'Quantity', 'Unit']].sort_values(["Group", "Quantity"], ascending=[True, False]), use_container_width=True, hide_index=True)
+        else:
+            st.warning("⚠️ Live stock data is currently syncing or missing.")
     
     if not audit_sheet:
         st.error("Audit Logs database not found. Please ask Admin to create the 'Audit Logs' sheet.")
@@ -1189,6 +1197,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
