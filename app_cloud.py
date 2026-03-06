@@ -27,7 +27,7 @@ st.markdown("""
     /* 1. Hide Streamlit Branding & Adjust Spacing */
     [data-testid="stToolbar"] {visibility: hidden !important;}
     footer {visibility: hidden !important;}
-    .block-container {padding-top: 2rem !important; padding-bottom: 2rem !important;}
+    .block-container {padding-top: 3rem !important; padding-bottom: 2rem !important;}
     
     /* 2. App Background & Global Font Tweaks */
     .stApp {background-color: #f8f9fc; color: #1e293b;}
@@ -322,30 +322,38 @@ def create_order_pdf(row):
     return bytes(pdf.output())
 
 # ==========================================
-# APP NAVIGATION MENU
+# MOBILE-FRIENDLY TOP NAVIGATION
 # ==========================================
-st.sidebar.title(f"🏢 NYC Brand")
-st.sidebar.markdown(f"**User:** {st.session_state.user_name}")
-st.sidebar.markdown(f"**Role:** {st.session_state.role}")
-st.sidebar.divider()
-
 pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor", "🏢 Rent Tracker"]
 
 if st.session_state.role == "Admin":
     pages.append("📊 Audit Report")
     pages.append("⚙️ Admin Dashboard")
 
-page = st.sidebar.radio("Navigate", pages)
+# Sleek Top Header Box
+st.markdown(f"""
+    <div style="display:flex; justify-content:space-between; align-items:center; background:#ffffff; padding:15px; border-radius:12px; border:1px solid #e2e8f0; margin-bottom:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
+        <div style="font-size:18px; font-weight:bold; color:#1e293b;">🏢 NYC Brand</div>
+        <div style="font-size:14px; color:#64748b;">👤 {st.session_state.user_name} ({st.session_state.role})</div>
+    </div>
+""", unsafe_allow_html=True)
 
-st.sidebar.divider()
-if st.sidebar.button("🔄 Force Refresh Data"):
-    st.cache_data.clear()
-    st.rerun()
-if st.sidebar.button("🚪 Logout"):
-    st.session_state.logged_in = False
-    cookie_manager.delete("mt_auth")
-    cookie_manager.delete("mt_userid")
-    st.rerun()
+# Navigation Dropdown & Action Buttons Row
+nav_col, btn1_col, btn2_col = st.columns([6, 2, 2])
+with nav_col:
+    page = st.selectbox("🧭 Menu", pages, label_visibility="collapsed")
+with btn1_col:
+    if st.button("🔄 Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+with btn2_col:
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state.logged_in = False
+        cookie_manager.delete("mt_auth")
+        cookie_manager.delete("mt_userid")
+        st.rerun()
+
+st.divider()
 
 # --- PAGE 1: INVENTORY DASHBOARD ---
 if page == "📦 Inventory Dashboard":
@@ -1197,6 +1205,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
