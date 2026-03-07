@@ -322,32 +322,89 @@ def create_order_pdf(row):
     return bytes(pdf.output())
 
 # ==========================================
+# 🌐 LANGUAGE MANAGER & COOKIES
+# ==========================================
+# 1. Read the saved language from cookies (Defaults to English)
+saved_lang = cookie_manager.get("mt_lang")
+if "app_lang" not in st.session_state:
+    st.session_state.app_lang = saved_lang if saved_lang in ["English", "Hindi"] else "English"
+
+# 2. Simple Hindi Dictionary for the UI
+# You can add more words here as you build out the rest of your app!
+LANG = {
+    "English": {
+        "brand": "🏢 NYC Brand",
+        "inv": "📦 Inventory Dashboard",
+        "ord": "📝 Order Desk",
+        "aud": "🔍 Stock Audit",
+        "ai": "🤖 AI Restock Advisor",
+        "rent": "🏢 Rent Tracker",
+        "rep": "📊 Audit Report",
+        "admin": "⚙️ Admin Dashboard",
+        "menu": "🧭 Menu",
+        "refresh": "🔄 Refresh",
+        "logout": "🚪 Logout"
+    },
+    "Hindi": {
+        "brand": "🏢 NYC ब्रांड",
+        "inv": "📦 स्टॉक डैशबोर्ड",          # Stock Dashboard
+        "ord": "📝 ऑर्डर डेस्क",              # Order Desk
+        "aud": "🔍 स्टॉक ऑडिट",              # Stock Audit
+        "ai": "🤖 AI रीस्टॉक सलाह",          # AI Restock Advice
+        "rent": "🏢 किराया ट्रैकर",          # Rent Tracker
+        "rep": "📊 ऑडिट रिपोर्ट",             # Audit Report
+        "admin": "⚙️ एडमिन डैशबोर्ड",       # Admin Dashboard
+        "menu": "🧭 मेनू",                 # Menu
+        "refresh": "🔄 रिफ्रेश करें",       # Refresh
+        "logout": "🚪 लॉगआउट"             # Logout
+    }
+}
+
+# Shortcut variable to make writing code faster
+t = LANG[st.session_state.app_lang]
+
+# ==========================================
 # MOBILE-FRIENDLY TOP NAVIGATION
 # ==========================================
-pages = ["📦 Inventory Dashboard", "📝 Order Desk", "🔍 Stock Audit", "🤖 AI Restock Advisor", "🏢 Rent Tracker"]
+# Language Toggle Switch (Sits right above the header)
+lang_col1, lang_col2 = st.columns([7, 3])
+with lang_col2:
+    # If toggle is ON, it's Hindi. If OFF, it's English.
+    is_hindi = st.session_state.app_lang == "Hindi"
+    new_lang_toggle = st.toggle("हिंदी / Eng", value=is_hindi)
+    new_lang = "Hindi" if new_lang_toggle else "English"
+    
+    # If the user flips the switch, save to cookie and reload the app
+    if new_lang != st.session_state.app_lang:
+        st.session_state.app_lang = new_lang
+        cookie_manager.set("mt_lang", new_lang)
+        st.rerun()
+
+# Build the page list using our Dictionary (t)
+pages = [t["inv"], t["ord"], t["aud"], t["ai"], t["rent"]]
 
 if st.session_state.role == "Admin":
-    pages.append("📊 Audit Report")
-    pages.append("⚙️ Admin Dashboard")
+    pages.append(t["rep"])
+    pages.append(t["admin"])
 
 # Sleek Top Header Box
 st.markdown(f"""
     <div style="display:flex; justify-content:space-between; align-items:center; background:#ffffff; padding:15px; border-radius:12px; border:1px solid #e2e8f0; margin-bottom:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
-        <div style="font-size:18px; font-weight:bold; color:#1e293b;">🏢 NYC Brand</div>
-        <div style="font-size:14px; color:#64748b;">👤 {st.session_state.user_name} ({st.session_state.role})</div>
+        <div style="font-size:18px; font-weight:bold; color:#1e293b;">{t["brand"]}</div>
+        <div style="font-size:14px; color:#64748b;">👤 {st.session_state.user_name}</div>
     </div>
 """, unsafe_allow_html=True)
 
 # Navigation Dropdown & Action Buttons Row
-nav_col, btn1_col, btn2_col = st.columns([6, 2, 2])
+nav_col, btn1_col, btn2_col = st.columns([5, 3, 2])
 with nav_col:
-    page = st.selectbox("🧭 Menu", pages, label_visibility="collapsed")
+    page = st.selectbox(t["menu"], pages, label_visibility="collapsed")
 with btn1_col:
-    if st.button("🔄 Refresh", use_container_width=True):
+    if st.button(t["refresh"], use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 with btn2_col:
-    if st.button("🚪 Logout", use_container_width=True):
+    if st.button(t["logout"], use_container_width=True):
         st.session_state.logged_in = False
         cookie_manager.delete("mt_auth")
         cookie_manager.delete("mt_userid")
@@ -1205,6 +1262,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
