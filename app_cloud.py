@@ -413,8 +413,8 @@ with btn2_col:
 st.divider()
 
 # --- PAGE 1: INVENTORY DASHBOARD ---
-if page == "📦 Inventory Dashboard":
-    st.title("📦 Live Physical Inventory")
+if page == t["inv"]:
+    st.header(t["inv"])
     if not df.empty:
         col_search, col_filter = st.columns(2)
         with col_search: search_text = st.text_input("🔍 Search Item...", "")
@@ -446,8 +446,8 @@ if page == "📦 Inventory Dashboard":
             st.dataframe(sorted_df, use_container_width=True, hide_index=True)
 
 # --- PAGE 2: ORDER DESK ---
-elif page == "📝 Order Desk":
-    st.title("📝 Order Management")
+elif page == t["ord"]:
+    st.header(t["ord"])
     orders_df = fetch_orders_cache(orders_sheet)
     
     order_tab1, order_tab2, order_tab3 = st.tabs(["➕ Place New Order", "⏳ Pending Orders", "✅ Completed Orders"])
@@ -730,8 +730,8 @@ elif page == "📝 Order Desk":
                             except Exception as e: st.error(f"Failed to delete: {e}")
 
 # --- PAGE 3: STOCK AUDIT (EMPLOYEE VIEW) ---
-elif page == "🔍 Stock Audit":
-    st.title("🔍 Physical Stock Audit")
+elif page == t["aud"]:
+    st.header(t["aud"])
     
     with st.expander("👀 View Current System Quantities (Live Tally Stock)"):
         if not df.empty and all(c in df.columns for c in ['Group', 'Item', 'Quantity', 'Unit']):
@@ -814,8 +814,8 @@ elif page == "🔍 Stock Audit":
             st.success("🎉 Incredible job! All inventory items have been physically audited.")
 
 # --- PAGE 4: AUDIT REPORT (ADMIN ONLY) ---
-elif page == "📊 Audit Report":
-    st.title("📊 Physical Audit Variance Report")
+elif page == t["ai"]:
+    st.header(t["ai"])
     st.write("Compare physical counts submitted by employees against live Tally stock.")
     
     if not audit_sheet:
@@ -929,8 +929,8 @@ elif page == "⚙️ Admin Dashboard":
     except: pass
 
 # --- PAGE 7: RENT TRACKER ---
-elif page == "🏢 Rent Tracker":
-    st.title("🏢 Property & Rent Tracker")
+elif page == t["rep"]:
+    st.header(t["rep"])
     
     if tenants_sheet is None or rent_tx_sheet is None:
         st.error("⚠️ Database Error: Sheets not found in Google Sheets.")
@@ -1262,6 +1262,7 @@ elif page == "🏢 Rent Tracker":
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error updating tenant: {e}")
+
 
 
 
