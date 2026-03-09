@@ -1034,8 +1034,8 @@ elif page == t["ord"]:
         
         pick_display = None
         if filtered_display:
-            # Show top 10 results max to keep UI clean
-            pick_display = st.radio("Select Item:", filtered_display[:10], index=0, key=f"radio_item_{r_key}")
+            # Show top 30 results max to keep UI clean
+            pick_display = st.selectbox("Select Item:", filtered_display[:30], index=0, key=f"radio_item_{r_key}")
         elif search_query:
             st.warning("⚠️ No items match your search. Try different keywords.")
             
