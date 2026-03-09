@@ -1014,8 +1014,20 @@ elif page == t["ord"]:
         display_available = [hindi(i) for i in available_items] if st.session_state.get('app_lang') == 'Hindi' else available_items
         display_to_real_item = dict(zip(display_available, available_items))
         
+        # 🟢 Sorting based on Stock Priority
+        item_qty_map = dict(zip(df['Item'], df['Quantity'])) if not df.empty else {}
+        def stock_priority(d_item):
+            qty = item_qty_map.get(display_to_real_item[d_item], 0)
+            if qty > 0: return 0
+            elif qty < 0: return 1
+            else: return 2
+            
+        display_available = sorted(display_available, key=stock_priority)
+        
         # 🟢 Custom Fuzzy Search Logic for Items (Handles out-of-order words)
-        search_query = st.text_input(t.get("pick_item", "🔍 Search & Pick an Item"), placeholder="e.g. 1000D PU...", key=f"search_item_{r_key}").strip()
+        sc1, sc2 = st.columns([1, 1])
+        with sc1:
+            search_query = st.text_input(t.get("search_keyword", "🔍 Search Keyword"), placeholder="e.g. 1000D PU... (Optional)", key=f"search_item_{r_key}").strip()
         
         filtered_display = display_available
         if search_query:
@@ -1033,11 +1045,12 @@ elif page == t["ord"]:
                     filtered_display.append(d_item)
         
         pick_display = None
-        if filtered_display:
-            # Show top 30 results max to keep UI clean
-            pick_display = st.selectbox("Select Item:", filtered_display[:30], index=0, key=f"radio_item_{r_key}")
-        elif search_query:
-            st.warning("⚠️ No items match your search. Try different keywords.")
+        with sc2:
+            if filtered_display:
+                # Show top 50 results max to keep UI clean
+                pick_display = st.selectbox(t.get("select_match", "🎯 Select Match:"), filtered_display[:50], index=0, key=f"radio_item_{r_key}")
+            elif search_query:
+                st.warning("⚠️ No matches.")
             
         pick_item = display_to_real_item.get(pick_display) if pick_display else None
         
