@@ -123,7 +123,6 @@ def get_gspread_client():
             safe_open("Orders"),
             safe_open("Users"),
             safe_open("Restock Times"),
-            safe_open("Weekly Snapshots"),
             safe_open("15-Day Sales"),
             safe_open("Customers"),
             safe_open("Audit Logs"),
@@ -135,7 +134,7 @@ def get_gspread_client():
         st.error(f"Failed to connect to Google Sheets: {e}")
         return [None]*11
 
-stock_sheet, orders_sheet, users_sheet, restock_sheet, history_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet = get_gspread_client()
+stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -203,7 +202,7 @@ if not st.session_state.logged_in:
     
     if st.button(_lt["btn"], type="primary", use_container_width=True):
         if users_sheet:
-            users_data = users_sheet.get_all_records()
+            users_data = fetch_basic_records(users_sheet, "Users")
             if not users_data:
                 st.error(_lt["empty"])
             else:
@@ -274,6 +273,14 @@ def fetch_rent_cache(_sheet, sheet_name): # 🟢 THE FIX: Added sheet_name so St
         return df
     except: return pd.DataFrame()
     
+
+@st.cache_data(ttl=300)
+def fetch_basic_records(_sheet, sheet_name):
+    """Aggressive 5-minute cache for static sheets like Users, Master Items, Tenants."""
+    try:
+        if _sheet is None: return []
+        return _sheet.get_all_records()
+    except: return []
 
 # 🟢 HINDI DATA MAP — Reads the "Hindi Map" sheet for data translation
 @st.cache_data(ttl=300)
@@ -898,6 +905,9 @@ with nav_col:
 with btn1_col:
     if st.button(t["refresh"], use_container_width=True):
         st.cache_data.clear()
+        if 'optimistic_orders' in st.session_state: st.session_state.optimistic_orders = []
+        if 'optimistic_rent_tx' in st.session_state: st.session_state.optimistic_rent_tx = []
+        if 'optimistic_tenants' in st.session_state: st.session_state.optimistic_tenants = []
         st.rerun()
 with btn2_col:
     if st.button(t["logout"], use_container_width=True):
@@ -947,6 +957,14 @@ elif page == t["ord"]:
     st.header(t["ord"])
     orders_df = fetch_orders_cache(orders_sheet)
     
+    # 🟢 OPTIMISTIC UI: Inject locally added orders before rendering
+    if 'optimistic_orders' not in st.session_state:
+        st.session_state.optimistic_orders = []
+    
+    if st.session_state.optimistic_orders and not orders_df.empty:
+        opt_df = pd.DataFrame(st.session_state.optimistic_orders)
+        orders_df = pd.concat([opt_df, orders_df], ignore_index=True) # Put new ones at top
+    
     order_tab1, order_tab2, order_tab3 = st.tabs([t["place_order"], t["pending_orders"], t["completed_orders"]])
     
     with order_tab1:
@@ -956,7 +974,7 @@ elif page == t["ord"]:
         r_key = st.session_state.form_reset
         
         try:
-            cust_data = cust_sheet.get_all_records()
+            cust_data = fetch_basic_records(cust_sheet, "Customers")
             customer_list = sorted(list(set([str(row['Customer Name']).strip() for row in cust_data if 'Customer Name' in row and str(row['Customer Name']).strip()])))
             if st.session_state.get('app_lang') == 'Hindi':
                 customer_list = [hindi(c) for c in customer_list]
@@ -979,7 +997,7 @@ elif page == t["ord"]:
         st.write(t["select_items_cart"])
         
         try:
-            master_data = master_sheet.get_all_records()
+            master_data = fetch_basic_records(master_sheet, "Master Items")
             item_list = sorted([str(row['Item Name']).strip() for row in master_data if 'Item Name' in row])
         except:
             item_list = df['Item'].tolist() if not df.empty else []
@@ -996,12 +1014,31 @@ elif page == t["ord"]:
         display_available = [hindi(i) for i in available_items] if st.session_state.get('app_lang') == 'Hindi' else available_items
         display_to_real_item = dict(zip(display_available, available_items))
         
-        pick_display = st.selectbox(
-            t.get("pick_item", "🔍 Search & Pick an Item"),
-            display_available, index=None,
-            placeholder=t.get("pick_item_ph", "Type to search..."),
-            key=f"pick_item_{r_key}"
-        )
+        # 🟢 Custom Fuzzy Search Logic for Items (Handles out-of-order words)
+        search_query = st.text_input(t.get("pick_item", "🔍 Search & Pick an Item"), placeholder="e.g. 1000D PU...", key=f"search_item_{r_key}").strip()
+        
+        filtered_display = display_available
+        if search_query:
+            # Split search query into individual words (e.g. "pu 1000" -> ["pu", "1000"])
+            search_words = [w.lower() for w in search_query.split()]
+            
+            # Keep items that contain ALL the search words (in any order)
+            filtered_display = []
+            for d_item in display_available:
+                # We search against both the display name (Hindi/English) AND the underlying real name (English)
+                real_name = display_to_real_item[d_item]
+                combined_search_text = f"{d_item.lower()} {real_name.lower()}"
+                
+                if all(word in combined_search_text for word in search_words):
+                    filtered_display.append(d_item)
+        
+        pick_display = None
+        if filtered_display:
+            # Show top 10 results max to keep UI clean
+            pick_display = st.radio("Select Item:", filtered_display[:10], index=0, key=f"radio_item_{r_key}")
+        elif search_query:
+            st.warning("⚠️ No items match your search. Try different keywords.")
+            
         pick_item = display_to_real_item.get(pick_display) if pick_display else None
         
         if pick_item:
@@ -1115,11 +1152,23 @@ elif page == t["ord"]:
                     else:
                         st.success(t["order_placed_db"].format(oid=order_id))
 
-                    # 🟢 THE UNIFIED FIX: Advance the reset key AND clear the memory cache!
+                    # 🟢 OPTIMISTIC UI: Add to local state immediately instead of waiting for Google Sheets
+                    if 'optimistic_orders' not in st.session_state:
+                        st.session_state.optimistic_orders = []
+                        
+                    st.session_state.optimistic_orders.append({
+                        "Order ID": order_id,
+                        "Date": now_ist.strftime("%d-%m-%Y %I:%M %p"),
+                        "Customer Name": customer_name,
+                        "Order Details": details_str,
+                        "Status": "Pending",
+                        "Completed By": "",
+                        "Notes": order_notes
+                    })
+
                     st.session_state.form_reset += 1
-                    fetch_orders_cache.clear()
+                    st.session_state.order_cart = {} # Clear cart cleanly
                             
-                    time.sleep(1.5)
                     st.rerun()
                 except Exception as e: 
                     st.error(t["error_saving_order"].format(err=e))
@@ -1150,7 +1199,6 @@ elif page == t["ord"]:
                             except: pass
                             
                             st.success(t["order_completed"])
-                            time.sleep(1)
                             fetch_orders_cache.clear()
                             st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
@@ -1200,7 +1248,6 @@ elif page == t["ord"]:
                                     orders_sheet.update_cell(cell.row, 4, reconstructed_details)
                                     orders_sheet.update_cell(cell.row, 7, mod_notes)
                                     st.success(t["order_updated"])
-                                    time.sleep(1)
                                     fetch_orders_cache.clear()
                                     st.rerun()
                                 except Exception as e: st.error(t["failed_update"].format(err=e))
@@ -1210,7 +1257,6 @@ elif page == t["ord"]:
                                 cell = orders_sheet.find(row['Order ID'])
                                 orders_sheet.delete_rows(cell.row)
                                 st.warning(t["order_deleted"])
-                                time.sleep(1)
                                 fetch_orders_cache.clear()
                                 st.rerun()
                             except Exception as e: st.error(t["failed_delete"].format(err=e))
@@ -1276,7 +1322,6 @@ elif page == t["ord"]:
                                 cell = orders_sheet.find(row['Order ID'])
                                 orders_sheet.delete_rows(cell.row)
                                 st.warning(t["record_deleted"])
-                                time.sleep(1)
                                 st.rerun()
                             except Exception as e: st.error(t["failed_delete"].format(err=e))
 
@@ -1294,7 +1339,7 @@ elif page == t["aud"]:
         st.error(t["audit_db_missing"])
     else:
         try:
-            audit_data = audit_sheet.get_all_records()
+            audit_data = fetch_basic_records(audit_sheet, "Audit Logs")
             audit_df = pd.DataFrame(audit_data)
             if not audit_df.empty and 'Status' in audit_df.columns:
                 active_audit = audit_df[audit_df['Status'] == 'Active']
@@ -1350,7 +1395,6 @@ elif page == t["aud"]:
                         try:
                             audit_sheet.append_row([timestamp, audit_item, loc, qty, st.session_state.user_name, "Active"])
                             st.success(t["logged_success"].format(qty=qty, item=audit_item))
-                            time.sleep(1)
                             st.rerun()
                         except Exception as e:
                             st.error(t["failed_log_audit"].format(err=e))
@@ -1376,7 +1420,7 @@ elif page == t["rep"]:
         st.error(t["audit_db_not_found"])
     else:
         try:
-            audit_data = audit_sheet.get_all_records()
+            audit_data = fetch_basic_records(audit_sheet, "Audit Logs")
             audit_df = pd.DataFrame(audit_data)
         except:
             audit_df = pd.DataFrame()
@@ -1439,9 +1483,9 @@ elif page == t["ai"]:
             with st.spinner(t["ai_spinner"]):
                 try:
                     live_stock = df.to_csv(index=False) if not df.empty else "No live stock data."
-                    try: restock_times = pd.DataFrame(restock_sheet.get_all_records()).to_csv(index=False)
+                    try: restock_times = pd.DataFrame(fetch_basic_records(restock_sheet, "Restock Times")).to_csv(index=False)
                     except: restock_times = "No restock lead times configured."
-                    try: recent_sales = pd.DataFrame(sales_sheet.get_all_records()).to_csv(index=False)
+                    try: recent_sales = pd.DataFrame(fetch_basic_records(sales_sheet, "15-Day Sales")).to_csv(index=False)
                     except: recent_sales = "No recent sales data available."
                     
                     prompt = f"""
@@ -1479,7 +1523,7 @@ elif page == t["admin"]:
             users_sheet.append_row([new_id, new_pass, new_role, new_name])
             st.success(t["user_created"])
     
-    try: st.dataframe(pd.DataFrame(users_sheet.get_all_records())[['User ID', 'Name', 'Role']], use_container_width=True)
+    try: st.dataframe(pd.DataFrame(fetch_basic_records(users_sheet, "Users"))[['User ID', 'Name', 'Role']], use_container_width=True)
     except: pass
 
 # --- PAGE 7: RENT TRACKER ---
@@ -1495,6 +1539,20 @@ elif page == t["rent"]:
 
         df_tenants = df_tenants_raw.copy()
         df_tx = df_tx_raw.copy()
+        
+        # 🟢 OPTIMISTIC UI INJECTION FOR RENT TRACKER
+        if 'optimistic_rent_tx' not in st.session_state:
+            st.session_state.optimistic_rent_tx = []
+        if 'optimistic_tenants' not in st.session_state:
+            st.session_state.optimistic_tenants = []
+            
+        if st.session_state.optimistic_rent_tx and not df_tx.empty:
+            opt_tx = pd.DataFrame(st.session_state.optimistic_rent_tx)
+            df_tx = pd.concat([df_tx, opt_tx], ignore_index=True)
+            
+        if st.session_state.optimistic_tenants and not df_tenants.empty:
+            opt_ten = pd.DataFrame(st.session_state.optimistic_tenants)
+            df_tenants = pd.concat([df_tenants, opt_ten], ignore_index=True)
 
         # 2. Clean Headers (Remove invisible spaces)
         if not df_tenants.empty: df_tenants.columns = df_tenants.columns.str.strip()
@@ -1620,9 +1678,12 @@ elif page == t["rent"]:
                     if st.form_submit_button(t["save_payment"], type="primary"):
                         timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
                         rent_tx_sheet.append_row([timestamp, p_tenant, "Payment", "Rent", float(p_amt), "", p_notes, st.session_state.user_name])
+                        
+                        # 🟢 OPTIMISTIC UI: Instant Update
+                        if 'optimistic_rent_tx' not in st.session_state: st.session_state.optimistic_rent_tx = []
+                        st.session_state.optimistic_rent_tx.append({"Date": timestamp, "Tenant Name": p_tenant, "Type": "Payment", "Category": "Rent", "Amount": float(p_amt), "Meter Details": "", "Notes": p_notes, "Recorded By": st.session_state.user_name})
+                        
                         st.success(t["payment_recorded"].format(amt=p_amt, tenant=p_tenant))
-                        fetch_rent_cache.clear()
-                        time.sleep(1)
                         st.rerun()
 
         # TAB 3: LOG BILLS (RENT & ELECTRICITY)
@@ -1681,18 +1742,20 @@ elif page == t["rent"]:
                     if st.button(t["post_charges"], type="primary"):
                         timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
                         try:
+                            if 'optimistic_rent_tx' not in st.session_state: st.session_state.optimistic_rent_tx = []
+                            
                             if charge_rent:
                                 rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Rent", base_rent, "", bill_notes, st.session_state.user_name])
+                                st.session_state.optimistic_rent_tx.append({"Date": timestamp, "Tenant Name": bill_tenant, "Type": "Charge", "Category": "Rent", "Amount": float(base_rent), "Meter Details": "", "Notes": bill_notes, "Recorded By": st.session_state.user_name})
                             
                             if charge_elec and e_amt_final > 0:
                                 rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", float(e_amt_final), float(units) if units > 0 else "", bill_notes, st.session_state.user_name])
+                                st.session_state.optimistic_rent_tx.append({"Date": timestamp, "Tenant Name": bill_tenant, "Type": "Charge", "Category": "Electricity", "Amount": float(e_amt_final), "Meter Details": float(units) if units > 0 else "", "Notes": bill_notes, "Recorded By": st.session_state.user_name})
                                 if e_type in ['Variable', 'Variable (Meter)']:
                                     t_cell = tenants_sheet.find(str(t_data['Tenant ID']))
                                     tenants_sheet.update_cell(t_cell.row, 8, float(new_meter))
                                         
                             st.success(t["charges_posted"])
-                            fetch_rent_cache.clear()
-                            time.sleep(1.5)
                             st.rerun()
                         except Exception as e: st.error(t["error_posting"].format(err=e))
                 else:
@@ -1754,6 +1817,14 @@ elif page == t["rent"]:
                         if nt_name:
                             tenants_sheet.append_row([t_id, nt_name, nt_loc, float(nt_rent), nt_etype, float(nt_erate), nt_epaid, float(nt_meter), float(nt_security), str(start_date), pr_val, "Active"])
                             
+                            if 'optimistic_tenants' not in st.session_state: st.session_state.optimistic_tenants = []
+                            st.session_state.optimistic_tenants.append({
+                                "Tenant ID": t_id, "Name": nt_name, "Location": nt_loc, "Rent Amount": float(nt_rent), 
+                                "Electricity Type": nt_etype, "Elec Rate": float(nt_erate), "Elec Paid By": nt_epaid, 
+                                "Meter Reading": float(nt_meter), "Security Deposit": float(nt_security), 
+                                "Billing Start Date": str(start_date), "Pro Rata": pr_val, "Status": "Active"
+                            })
+                            
                             if pr_val == "Yes" and nt_rent > 0:
                                 now = datetime.now(IST)
                                 days_in_month = calendar.monthrange(now.year, now.month)[1]
@@ -1765,12 +1836,14 @@ elif page == t["rent"]:
                                     timestamp, nt_name, "Charge", "Rent (Pro-Rata)", float(pro_rata_rent), "",
                                     f"Pro-rata rent for {days_active} days in {now.strftime('%b %Y')}", st.session_state.user_name
                                 ])
+                                
+                                if 'optimistic_rent_tx' not in st.session_state: st.session_state.optimistic_rent_tx = []
+                                st.session_state.optimistic_rent_tx.append({"Date": timestamp, "Tenant Name": nt_name, "Type": "Charge", "Category": "Rent (Pro-Rata)", "Amount": float(pro_rata_rent), "Meter Details": "", "Notes": f"Pro-rata rent...", "Recorded By": st.session_state.user_name})
+                                
                                 st.success(t["tenant_added_prorata"].format(amt=pro_rata_rent))
                             else:
                                 st.success(t["tenant_added_fixed"].format(day=start_date.day))
                                 
-                            fetch_rent_cache.clear()
-                            time.sleep(2)
                             st.rerun()
                         else: st.error(t["name_required"])
             
@@ -1811,8 +1884,6 @@ elif page == t["rent"]:
                                     tenants_sheet.update_cell(cell.row, 12, e_status)
                                     
                                     st.success(t["tenant_updated"].format(name=row['Name']))
-                                    fetch_rent_cache.clear()
-                                    time.sleep(1)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(t["error_updating"].format(err=e))
