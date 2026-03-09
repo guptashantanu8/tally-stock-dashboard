@@ -983,35 +983,75 @@ elif page == t["ord"]:
             item_list = sorted([str(row['Item Name']).strip() for row in master_data if 'Item Name' in row])
         except:
             item_list = df['Item'].tolist() if not df.empty else []
-            
-        selected_items = st.multiselect(t["search_choose_items"], item_list, key=f"order_items_{r_key}")
-        order_details_dict = {}
         
-        if selected_items:
-            for item in selected_items:
-                item_data = df[df['Item'] == item]
-                if not item_data.empty:
-                    avail_qty = item_data['Quantity'].iloc[0]
-                    unit = item_data['Unit'].iloc[0]
-                    stock_color = "#4CAF50"
-                else:
-                    avail_qty = 0
-                    unit = "units"
-                    stock_color = "#dc3545"
-                
-                st.markdown(f'<div class="item-banner"><h4 style="margin:0; color: #333;">{hindi(item)}</h4><span style="color: {stock_color}; font-weight: bold;">{t["stock_label"]} {avail_qty:,.0f} {unit}</span></div>', unsafe_allow_html=True)
-                st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
-                c1, c2, c3 = st.columns(3)
-                with c1: qty = st.number_input(f"{t['order_qty']} ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_{item}_{r_key}")
-                with c2: alt_qty = st.number_input(t["alt_qty"], min_value=0.0, value=0.0, step=1.0, key=f"a_{item}_{r_key}")
-                with c3: alt_unit = st.text_input(t["alt_unit"], key=f"u_{item}_{r_key}")
-                st.markdown('</div>', unsafe_allow_html=True)
-                
+        # 🟢 Cart-based item adding
+        if 'order_cart' not in st.session_state:
+            st.session_state.order_cart = {}
+        
+        # --- ADD ITEM SECTION ---
+        st.markdown(f"##### {t.get('add_item_title', '➕ Add Item to Cart')}")
+        
+        # Filter out items already in cart
+        available_items = [i for i in item_list if i not in st.session_state.order_cart]
+        display_available = [hindi(i) for i in available_items] if st.session_state.get('app_lang') == 'Hindi' else available_items
+        display_to_real_item = dict(zip(display_available, available_items))
+        
+        pick_display = st.selectbox(
+            t.get("pick_item", "🔍 Search & Pick an Item"),
+            display_available, index=None,
+            placeholder=t.get("pick_item_ph", "Type to search..."),
+            key=f"pick_item_{r_key}"
+        )
+        pick_item = display_to_real_item.get(pick_display) if pick_display else None
+        
+        if pick_item:
+            item_data = df[df['Item'] == pick_item]
+            if not item_data.empty:
+                avail_qty = item_data['Quantity'].iloc[0]
+                unit = item_data['Unit'].iloc[0]
+                stock_color = "#4CAF50" if avail_qty > 0 else "#dc3545"
+            else:
+                avail_qty = 0
+                unit = "units"
+                stock_color = "#dc3545"
+            
+            st.markdown(f'<div class="item-banner"><h4 style="margin:0; color: #333;">{hindi(pick_item)}</h4><span style="color: {stock_color}; font-weight: bold;">{t["stock_label"]} {avail_qty:,.0f} {unit}</span></div>', unsafe_allow_html=True)
+            st.markdown('<div class="item-inputs">', unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            with c1: qty = st.number_input(f"{t['order_qty']} ({unit})", min_value=1.0, value=1.0, step=1.0, key=f"p_add_{r_key}")
+            with c2: alt_qty = st.number_input(t["alt_qty"], min_value=0.0, value=0.0, step=1.0, key=f"a_add_{r_key}")
+            with c3: alt_unit = st.text_input(t["alt_unit"], key=f"u_add_{r_key}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            if st.button(t.get("add_to_cart", "➕ Add to Cart"), type="primary", key=f"add_btn_{r_key}"):
                 detail_str = f"{qty} {unit}" + (f" (Alt: {alt_qty} {alt_unit})" if alt_qty > 0 and alt_unit else "")
-                order_details_dict[item] = detail_str
+                st.session_state.order_cart[pick_item] = detail_str
+                st.rerun()
+        
+        # --- CART SUMMARY ---
+        if st.session_state.order_cart:
+            st.divider()
+            st.markdown(f"##### 🛒 {t.get('cart_title', 'Your Cart')} ({len(st.session_state.order_cart)} {t.get('cart_items', 'items')})")
+            
+            for cart_item, cart_detail in list(st.session_state.order_cart.items()):
+                ic1, ic2, ic3 = st.columns([5, 4, 1])
+                with ic1:
+                    st.markdown(f"**{hindi(cart_item)}**")
+                with ic2:
+                    st.caption(cart_detail)
+                with ic3:
+                    if st.button("❌", key=f"rm_{cart_item}_{r_key}", help=t.get("remove_item", "Remove")):
+                        del st.session_state.order_cart[cart_item]
+                        st.rerun()
+            
+            if st.button(t.get("clear_cart", "🗑️ Clear Cart"), key=f"clear_cart_{r_key}"):
+                st.session_state.order_cart = {}
+                st.rerun()
+        
+        order_details_dict = st.session_state.order_cart
         
         if st.button(t["submit_order"], type="primary"):
-            if not customer_name or not selected_items:
+            if not customer_name or not order_details_dict:
                 st.error(t["fill_all_details"])
             else:
                 now_ist = datetime.now(IST)
@@ -1034,18 +1074,29 @@ elif page == t["ord"]:
                         if tg_token and tg_chat_id:
                             items_array = details_str.split(" | ")
                             table_text = "━━━━━━━━━━━━━━━━━━━━\n"
+                            table_text_hi = "━━━━━━━━━━━━━━━━━━━━\n"
                             for i in items_array:
                                 if ": " in i:
                                     name, q = i.split(": ", 1)
                                     table_text += f"▪️ {name} ➔ {q}\n"
+                                    table_text_hi += f"▪️ {hindi(name)} ➔ {q}\n"
                                 else:
                                     table_text += f"▪️ {i}\n"
+                                    table_text_hi += f"▪️ {hindi(i)}\n"
                             table_text += "━━━━━━━━━━━━━━━━━━━━\n"
+                            table_text_hi += "━━━━━━━━━━━━━━━━━━━━\n"
                             
                             alert_text = "🚨 NEW ORDER ALERT 🚨\n\n"
                             alert_text += f"🆔 {order_id}\n👤 {customer_name}\n\n{table_text}"
                             if order_notes and str(order_notes).strip(): alert_text += f"\n📝 Notes: {order_notes}\n"
                             alert_text += f"\n✅ Placed By: {st.session_state.user_name}"
+                            
+                            # Hindi translation section
+                            alert_text += "\n\n── हिंदी अनुवाद ──\n"
+                            alert_text += f"🚨 नया ऑर्डर 🚨\n"
+                            alert_text += f"🆔 {order_id}\n👤 {hindi(customer_name)}\n\n{table_text_hi}"
+                            if order_notes and str(order_notes).strip(): alert_text += f"📝 नोट: {hindi(str(order_notes))}\n"
+                            alert_text += f"✅ द्वारा: {st.session_state.user_name}"
                             
                             encoded_text = urllib.parse.quote(alert_text)
                             res = requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}")
@@ -1093,6 +1144,7 @@ elif page == t["ord"]:
                                 tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
                                 if tg_token and tg_chat_id:
                                     comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Completed By: {st.session_state.user_name}"
+                                    comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 पूरा किया: {st.session_state.user_name}"
                                     encoded_comp = urllib.parse.quote(comp_text)
                                     requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
                             except: pass
