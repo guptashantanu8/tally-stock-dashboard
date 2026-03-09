@@ -167,6 +167,41 @@ if not st.session_state.logged_in:
             st.rerun()
 
 # ==========================================
+# 🛑 INTERVAL AUTHENTICATION CHECK (THE "BOUNCER")
+# ==========================================
+if st.session_state.get('logged_in'):
+    now = datetime.now()
+    last_check = st.session_state.get('last_auth_check')
+    
+    # Check if 5 minutes have passed OR if it's never been checked in this session
+    if last_check is None or (now - last_check).total_seconds() > 300:
+        try:
+            current_users_data = fetch_basic_records(users_sheet, "Users")
+            if current_users_data:
+                df_curr_users = pd.DataFrame(current_users_data)
+                df_curr_users.columns = df_curr_users.columns.astype(str).str.strip()
+                
+                if 'Status' in df_curr_users.columns:
+                    user_record = df_curr_users[df_curr_users['User ID'].astype(str).str.strip() == str(st.session_state.user_id).strip()]
+                    if not user_record.empty:
+                        current_status = str(user_record.iloc[0].get('Status', 'Active')).strip()
+                        if current_status == 'Revoked':
+                            st.session_state.logged_in = False
+                            st.session_state.user_id = ""
+                            st.session_state.user_name = ""
+                            st.session_state.role = ""
+                            st.session_state.last_auth_check = None
+                            cookie_manager.delete("mt_auth")
+                            st.error("🚫 Your access has been revoked by an Administrator.")
+                            time.sleep(3)
+                            st.rerun()
+                            
+            # If not revoked, reset the 5-minute timer
+            st.session_state.last_auth_check = now
+        except Exception as e:
+            pass # Fail silently if Sheets API blips so we don't accidentally boot users
+
+# ==========================================
 # 🌐 EARLY LANGUAGE INIT (so Login page can also be translated)
 # ==========================================
 saved_lang = cookie_manager.get("mt_lang")
@@ -216,18 +251,25 @@ if not st.session_state.logged_in:
                         (df_users['Password'].astype(str).str.strip() == str(login_pass).strip())
                     ]
                     if not user_match.empty:
-                        st.session_state.logged_in = True
-                        st.session_state.user_id = user_match.iloc[0]['User ID']
-                        st.session_state.user_name = user_match.iloc[0]['Name']
-                        st.session_state.role = user_match.iloc[0]['Role']
-                        
-                        expire_date = datetime.now() + timedelta(days=30)
-                        auth_string = f"{st.session_state.user_id}::{st.session_state.user_name}::{st.session_state.role}"
-                        cookie_manager.set("mt_auth", auth_string, expires_at=expire_date)
-                        
-                        st.success(_lt["welcome"].format(name=st.session_state.user_name))
-                        time.sleep(2)
-                        st.rerun()
+                        user_status = 'Active'
+                        if 'Status' in user_match.columns:
+                            user_status = str(user_match.iloc[0].get('Status', 'Active')).strip()
+                            
+                        if user_status == 'Revoked':
+                            st.error("🚫 Your access has been revoked. Contact Administrator.")
+                        else:
+                            st.session_state.logged_in = True
+                            st.session_state.user_id = user_match.iloc[0]['User ID']
+                            st.session_state.user_name = user_match.iloc[0]['Name']
+                            st.session_state.role = user_match.iloc[0]['Role']
+                            
+                            expire_date = datetime.now() + timedelta(days=30)
+                            auth_string = f"{st.session_state.user_id}::{st.session_state.user_name}::{st.session_state.role}"
+                            cookie_manager.set("mt_auth", auth_string, expires_at=expire_date)
+                            
+                            st.success(_lt["welcome"].format(name=st.session_state.user_name))
+                            time.sleep(2)
+                            st.rerun()
                     else:
                         st.error(_lt["invalid"])
     st.markdown('</div>', unsafe_allow_html=True)
@@ -905,6 +947,7 @@ with nav_col:
 with btn1_col:
     if st.button(t["refresh"], use_container_width=True):
         st.cache_data.clear()
+        st.session_state.last_auth_check = None # Force a fresh auth check
         if 'optimistic_orders' in st.session_state: st.session_state.optimistic_orders = []
         if 'optimistic_rent_tx' in st.session_state: st.session_state.optimistic_rent_tx = []
         if 'optimistic_tenants' in st.session_state: st.session_state.optimistic_tenants = []
@@ -1533,11 +1576,58 @@ elif page == t["admin"]:
     with st.form("add_user_form"):
         new_name, new_id, new_pass, new_role = st.text_input(t["full_name"]), st.text_input(t["user_id"]), st.text_input(t["password"], type="password"), st.selectbox(t["role_label"], ["Employee", "Admin"])
         if st.form_submit_button(t["create_user_btn"]) and new_name and new_id and new_pass:
-            users_sheet.append_row([new_id, new_pass, new_role, new_name])
+            users_sheet.append_row([new_id, new_pass, new_role, new_name, "Active"])
             st.success(t["user_created"])
+            fetch_basic_records.clear()
+            st.rerun()
     
-    try: st.dataframe(pd.DataFrame(fetch_basic_records(users_sheet, "Users"))[['User ID', 'Name', 'Role']], use_container_width=True)
-    except: pass
+    st.divider()
+    st.markdown("### 🔒 Employee Access Control")
+    st.caption("Revoking an employee will instantly log them out on their next screen interaction.")
+    
+    try:
+        users_data = fetch_basic_records(users_sheet, "Users")
+        if users_data:
+            df_users = pd.DataFrame(users_data)
+            df_users.columns = df_users.columns.astype(str).str.strip()
+            
+            headers = df_users.columns.tolist()
+            if 'Status' not in headers:
+                users_sheet.update_cell(1, len(headers) + 1, "Status")
+                headers.append("Status")
+                
+            status_col_idx = headers.index('Status') + 1
+            
+            for idx, row in df_users.iterrows():
+                u_id = str(row['User ID']).strip()
+                u_name = str(row['Name']).strip()
+                u_role = str(row['Role']).strip()
+                u_status = str(row.get('Status', 'Active')).strip()
+                
+                with st.container():
+                    c1, c2, c3, c4 = st.columns([2, 3, 2, 3])
+                    c1.markdown(f"**{u_id}**")
+                    c2.markdown(f"{u_name} ({u_role})")
+                    
+                    status_text = "🟢 Active" if u_status != 'Revoked' else "🔴 Revoked"
+                    c3.markdown(status_text)
+                    
+                    with c4:
+                        if u_id == st.session_state.user_id:
+                            st.caption("🛡️ Cannot revoke self")
+                        else:
+                            btn_label = "🚫 Set Revoked" if u_status != 'Revoked' else "✅ Set Active"
+                            btn_type = "secondary" if u_status != 'Revoked' else "primary"
+                            
+                            if st.button(btn_label, key=f"togg_usr_{u_id}", use_container_width=True, type=btn_type):
+                                new_val = "Revoked" if u_status != 'Revoked' else "Active"
+                                cell = users_sheet.find(u_id)
+                                users_sheet.update_cell(cell.row, status_col_idx, new_val)
+                                fetch_basic_records.clear()
+                                st.rerun()
+                    st.divider()
+    except Exception as e:
+        st.error(f"Failed to load user controls: {e}")
 
 # --- PAGE 7: RENT TRACKER ---
 elif page == t["rent"]:
