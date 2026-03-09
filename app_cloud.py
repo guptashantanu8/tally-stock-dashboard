@@ -30,21 +30,21 @@ st.markdown("""
     .block-container {padding-top: 3rem !important; padding-bottom: 2rem !important;}
     
     /* 2. App Background & Global Font Tweaks */
-    .stApp {background-color: #f8f9fc; color: #1e293b;}
+    .stApp {background-color: var(--background-color); color: var(--text-color);}
     
     /* 3. Sleek Login Box */
     .login-box {
         max-width: 420px; margin: 40px auto; padding: 40px; 
-        background: #ffffff; border-radius: 16px; 
-        box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;
+        background: var(--secondary-background-color); border-radius: 16px; 
+        box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid var(--secondary-background-color);
     }
     
     /* 4. Modern Order Cards with Hover Lift */
     .order-card { 
-        padding: 20px; background: #ffffff; border-radius: 12px; 
-        border-left: 6px solid #3b82f6; margin-bottom: 15px; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.02); border-top: 1px solid #f1f5f9;
-        border-right: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9;
+        padding: 20px; background: var(--secondary-background-color); border-radius: 12px; 
+        border-left: 6px solid var(--primary-color); margin-bottom: 15px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.02); border-top: 1px solid var(--secondary-background-color);
+        border-right: 1px solid var(--secondary-background-color); border-bottom: 1px solid var(--secondary-background-color);
         transition: transform 0.3s ease, box-shadow 0.3s ease;
     }
     .order-card:hover { transform: translateY(-3px); box-shadow: 0 10px 15px rgba(0,0,0,0.05); }
@@ -52,25 +52,25 @@ st.markdown("""
     
     /* 5. Clean Item Banners & Inputs for Order Form */
     .item-banner { 
-        background: linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%); 
+        background: var(--secondary-background-color); 
         padding: 15px 20px; border-radius: 10px 10px 0px 0px; 
-        border-left: 5px solid #6366f1; margin-top: 25px; 
-        border: 1px solid #e2e8f0; border-bottom: none;
+        border-left: 5px solid var(--primary-color); margin-top: 25px; 
+        border: 1px solid var(--secondary-background-color); border-bottom: none;
     }
     .item-inputs { 
-        background: #ffffff; padding: 20px; border-radius: 0px 0px 10px 10px; 
-        border: 1px solid #e2e8f0; border-top: none; margin-bottom: 15px;
+        background: var(--background-color); padding: 20px; border-radius: 0px 0px 10px 10px; 
+        border: 1px solid var(--secondary-background-color); border-top: none; margin-bottom: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.02);
     }
     
     /* 6. Beautiful Tables */
     .order-table { 
         width: 100%; border-collapse: collapse; margin-top: 15px; 
-        background-color: white; border-radius: 8px; overflow: hidden; 
-        border: 1px solid #e2e8f0;
+        background-color: var(--background-color); border-radius: 8px; overflow: hidden; 
+        border: 1px solid var(--secondary-background-color);
     }
-    .order-table th { background-color: #f8fafc; padding: 12px 15px; text-align: left; font-size: 13px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e2e8f0;}
-    .order-table td { padding: 12px 15px; border-bottom: 1px solid #f1f5f9; font-size: 14px; color: #334155;}
+    .order-table th { background-color: var(--secondary-background-color); padding: 12px 15px; text-align: left; font-size: 13px; color: var(--text-color); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--secondary-background-color);}
+    .order-table td { padding: 12px 15px; border-bottom: 1px solid var(--secondary-background-color); font-size: 14px; color: var(--text-color);}
     
     /* 7. Vibrant AI Card */
     .ai-card { 
@@ -83,9 +83,9 @@ st.markdown("""
     
     /* 8. Dashboard Metrics Styling */
     [data-testid="stMetric"] {
-        background-color: #ffffff; padding: 15px 20px; 
+        background-color: var(--secondary-background-color); padding: 15px 20px; 
         border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); 
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--secondary-background-color);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -128,13 +128,14 @@ def get_gspread_client():
             safe_open("Audit Logs"),
             safe_open("Master Items"),
             safe_open("Tenants"),
-            safe_open("Rent Transactions")
+            safe_open("Rent Transactions"),
+            safe_open("Archived Orders")
         )
     except Exception as e:
         st.error(f"Failed to connect to Google Sheets: {e}")
         return [None]*11
 
-stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet = get_gspread_client()
+stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet, archive_sheet = get_gspread_client()
 
 # --- CONFIGURE GEMINI AI ---
 try:
@@ -285,6 +286,10 @@ def fetch_stock_cache(_sheet):
         data = _sheet.get_all_values()
         if not data: return pd.DataFrame()
         headers = [str(h).strip() for h in data[0]]
+        
+        # 🟢 FRESHNESS TRACKER
+        st.session_state.stock_last_synced = datetime.now()
+        
         # 🟢 THE FIX: If there are only headers and no data yet, keep the headers!
         if len(data) == 1: return pd.DataFrame(columns=headers)
         df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
@@ -934,9 +939,9 @@ if st.session_state.role == "Admin":
 
 # Sleek Top Header Box
 st.markdown(f"""
-    <div style="display:flex; justify-content:space-between; align-items:center; background:#ffffff; padding:15px; border-radius:12px; border:1px solid #e2e8f0; margin-bottom:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
-        <div style="font-size:18px; font-weight:bold; color:#1e293b;">{t["brand"]}</div>
-        <div style="font-size:14px; color:#64748b;">👤 {st.session_state.user_name}</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; background:var(--secondary-background-color); padding:15px; border-radius:12px; border:1px solid var(--secondary-background-color); margin-bottom:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
+        <div style="font-size:18px; font-weight:bold; color:var(--text-color);">{t["brand"]}</div>
+        <div style="font-size:14px; color:var(--text-color); opacity: 0.8;">👤 {st.session_state.user_name}</div>
     </div>
 """, unsafe_allow_html=True)
 
@@ -964,12 +969,24 @@ st.divider()
 # --- PAGE 1: INVENTORY DASHBOARD ---
 if page == t["inv"]:
     st.header(t["inv"])
+    
+    # 🟢 DATA FRESHNESS INDICATOR
+    if 'stock_last_synced' in st.session_state and not df.empty:
+        sync_time = st.session_state.stock_last_synced.strftime("%I:%M %p")
+        st.markdown(f"<div style='margin-top:-10px; margin-bottom:15px; font-size:14px; color:#10b981; font-weight:500;'>🟢 Live Stock Last Synced: {sync_time}</div>", unsafe_allow_html=True)
+    elif df.empty:
+        st.markdown("<div style='margin-top:-10px; margin-bottom:15px; font-size:14px; color:#ef4444; font-weight:500;'>🔴 Sync Disconnected (No Data)</div>", unsafe_allow_html=True)
+
     if not df.empty:
-        col_search, col_filter = st.columns(2)
-        with col_search: search_text = st.text_input(t["search_item"], "")
-        with col_filter:
-            groups = [t["all_groups"]] + df['Group'].dropna().unique().tolist()
-            selected_group = st.selectbox(t["filter_group"], groups)
+        with st.form(key="inv_search_form"):
+            col_search, col_filter, col_btn = st.columns([3, 3, 1])
+            with col_search: search_text = st.text_input(t["search_item"], "")
+            with col_filter:
+                groups = [t["all_groups"]] + df['Group'].dropna().unique().tolist()
+                selected_group = st.selectbox(t["filter_group"], groups)
+            with col_btn:
+                st.markdown("<br>", unsafe_allow_html=True)
+                inv_search_submitted = st.form_submit_button("🔍", use_container_width=True)
 
         filtered_df = df.copy()
         if search_text: filtered_df = filtered_df[filtered_df['Item'].str.contains(search_text, case=False, na=False)]
@@ -1232,10 +1249,24 @@ elif page == t["ord"]:
 
     with order_tab2:
         if not orders_df.empty and 'Status' in orders_df.columns:
-            pending_df = orders_df[orders_df['Status'] == 'Pending'].iloc[::-1]
-            for idx, row in pending_df.iterrows():
-                st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
+            # Separate the two types of pending orders
+            manual_pending_df = orders_df[orders_df['Status'] == 'Pending'].iloc[::-1]
+            tally_pending_df = orders_df[orders_df['Status'] == 'Pending - Awaited Payment'].iloc[::-1]
+            
+            # Combine them for the loop, but manual orders first
+            combined_pending = pd.concat([manual_pending_df, tally_pending_df])
+            
+            for idx, row in combined_pending.iterrows():
+                is_tally = row['Status'] == 'Pending - Awaited Payment'
                 
+                if is_tally:
+                    # Custom UI for Tally auto-pulled orders
+                    card_style = "background-color: #fee2e2; border: 2px solid #b91c1c; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"
+                    tag_html = '<div style="background-color: #ef4444; color: white; padding: 5px 10px; border-radius: 4px; display: inline-block; font-weight: bold; margin-bottom: 10px; font-size: 14px;">🚨 NO DELIVERY UNTIL PAYMENT RECEIVED</div><br>'
+                    st.markdown(f'<div style="{card_style}">{tag_html}<h4 style="margin-top:0; color:#991b1b;">Order {row["Order ID"]} (Tally Sync)</h4><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
+                else:
+                    # Standard UI for manual orders
+                    st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button(t["mark_complete"], key=f"btn_{row['Order ID']}_{idx}"):
@@ -1322,8 +1353,8 @@ elif page == t["ord"]:
             completed_df = orders_df[orders_df['Status'] == 'Completed'].copy()
             completed_df['Parsed Date'] = pd.to_datetime(completed_df['Date'], format="%d-%m-%Y %I:%M %p", errors='coerce').dt.date
             
-            with st.expander(t["adv_filters"]):
-                fc1, fc2, fc3, fc4 = st.columns(4)
+            with st.form(key="comp_search_form"):
+                fc1, fc2, fc3, fc4, fc5 = st.columns([3, 3, 2, 2, 1])
                 
                 with fc1:
                     search_query = st.text_input(t["search_name_id"], placeholder=t["search_eg"], key="search_comp")
@@ -1340,7 +1371,10 @@ elif page == t["ord"]:
                 with fc4:
                     item_list = [t["all_items_filter"]] + df['Item'].dropna().unique().tolist() if not df.empty else [t["all_items_filter"]]
                     item_filter = st.selectbox(t["contains_fabric"], item_list, key="item_comp")
-                    
+                
+                with fc5:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    comp_search_submitted = st.form_submit_button("🔍", use_container_width=True)
             filtered_df = completed_df.copy()
             
             if search_query:
@@ -1628,6 +1662,50 @@ elif page == t["admin"]:
                     st.divider()
     except Exception as e:
         st.error(f"Failed to load user controls: {e}")
+
+    # --- 🗄️ DATABASE MAINTENANCE ---
+    st.divider()
+    st.markdown("### 🗄️ Database Maintenance")
+    st.caption("Move old completed orders to an archive sheet to keep the app fast and clean.")
+    
+    if st.button("📦 Archive Orders Older Than 30 Days", type="primary", use_container_width=True):
+        if not orders_sheet or not archive_sheet:
+            st.error("Cannot archive: Orders or Archived Orders sheet is missing.")
+        else:
+            try:
+                all_orders = orders_sheet.get_all_records(expected_headers=['Order ID'])
+                if not all_orders:
+                    st.info("No orders found to archive.")
+                else:
+                    cutoff = datetime.now(IST) - timedelta(days=30)
+                    rows_to_archive = []
+                    row_indices_to_delete = []  # 1-indexed (header = row 1)
+                    
+                    for i, row in enumerate(all_orders):
+                        if str(row.get('Status', '')).strip() == 'Completed':
+                            try:
+                                order_date = datetime.strptime(str(row.get('Date', '')).strip(), "%d-%m-%Y %I:%M %p")
+                                if order_date < cutoff:
+                                    rows_to_archive.append(list(row.values()))
+                                    row_indices_to_delete.append(i + 2)  # +2 because header=1, data starts at 2
+                            except:
+                                pass  # Skip rows with unparseable dates
+                    
+                    if not rows_to_archive:
+                        st.info("No completed orders older than 30 days found.")
+                    else:
+                        # Step 1: Append to Archive
+                        archive_sheet.append_rows(rows_to_archive)
+                        
+                        # Step 2: Delete from Orders (reverse order to preserve indices)
+                        for row_idx in sorted(row_indices_to_delete, reverse=True):
+                            orders_sheet.delete_rows(row_idx)
+                        
+                        st.success(f"✅ Successfully archived {len(rows_to_archive)} old orders!")
+                        fetch_orders_cache.clear()
+                        st.rerun()
+            except Exception as e:
+                st.error(f"Archive failed: {e}")
 
 # --- PAGE 7: RENT TRACKER ---
 elif page == t["rent"]:
