@@ -72,14 +72,44 @@ st.markdown("""
     .order-table th { background-color: var(--secondary-background-color); padding: 12px 15px; text-align: left; font-size: 13px; color: var(--text-color); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--secondary-background-color);}
     .order-table td { padding: 12px 15px; border-bottom: 1px solid var(--secondary-background-color); font-size: 14px; color: var(--text-color);}
     
-    /* 7. Vibrant AI Card */
-    .ai-card { 
-        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); 
-        padding: 25px; border-radius: 16px; color: white; 
-        margin-bottom: 25px; box-shadow: 0 10px 20px rgba(99, 102, 241, 0.2);
+    /* 7. Ultra-Premium AI Card (Glassmorphism + Animated Gradient) */
+    @keyframes aiGradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
     }
-    .ai-card h4 { color: white !important; margin-top: 0;}
-    .ai-card p { color: #f8fafc !important; }
+    .ai-card { 
+        background: linear-gradient(-45deg, #4f46e5, #9333ea, #ec4899, #8b5cf6);
+        background-size: 300% 300%;
+        animation: aiGradient 10s ease infinite;
+        padding: 30px; 
+        border-radius: 20px; 
+        color: white; 
+        margin-bottom: 30px; 
+        box-shadow: 0 20px 40px rgba(147, 51, 234, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        backdrop-filter: blur(10px);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .ai-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 25px 50px rgba(147, 51, 234, 0.4);
+    }
+    .ai-card h4 { color: white !important; margin-top: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; display: flex; align-items: center; gap: 10px;}
+    .ai-card p { color: rgba(255,255,255,0.9) !important; font-size: 16px; line-height: 1.6; margin-bottom: 0;}
+    
+    /* Magical AI Button Styling */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #0f172a 0%, #334155 100%) !important;
+        border: none !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important;
+        transition: all 0.3s ease !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #1e293b 0%, #475569 100%) !important;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.3) !important;
+    }
     
     /* 8. Dashboard Metrics Styling */
     [data-testid="stMetric"] {
@@ -1302,8 +1332,20 @@ elif page == t["ord"]:
                                 tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                                 tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
                                 if tg_token and tg_chat_id:
-                                    comp_text = f"✅ *PAYMENT RECEIVED / DELIVERY APPROVED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Approved By: {st.session_state.user_name}\n👑 Placed by: Super Admin"
-                                    comp_text += f"\n\n── हिंदी ──\n✅ *पेमेंट प्राप्त / डिलीवरी की अनुमति* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 स्वीकृत: {st.session_state.user_name}\n👑 द्वारा: सुपर एडमिन (Super Admin)"
+                                    # Format English items table
+                                    items_eng = ""
+                                    items_hi = ""
+                                    for chunk in str(row['Order Details']).split(" | "):
+                                        if ": " in chunk:
+                                            k, v = chunk.split(": ", 1)
+                                            items_eng += f"🔹 {k} | {v}\n"
+                                            items_hi += f"🔹 {hindi(k)} | {hindi(v)}\n"
+                                        else:
+                                            items_eng += f"🔹 {chunk}\n"
+                                            items_hi += f"🔹 {hindi(chunk)}\n"
+                                            
+                                    comp_text = f"✅ *PAYMENT RECEIVED / DELIVERY APPROVED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n\n📦 *ITEMS TO DELIVER:*\n{items_eng}\n👷 Approved By: {st.session_state.user_name}\n👑 Placed by: Super Admin"
+                                    comp_text += f"\n\n── हिंदी ──\n✅ *पेमेंट प्राप्त / डिलीवरी की अनुमति* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n\n📦 *डिलीवरी के लिए आइटम:*\n{items_hi}\n👷 स्वीकृत: {st.session_state.user_name}\n👑 द्वारा: सुपर एडमिन (Super Admin)"
                                     encoded_comp = urllib.parse.quote(comp_text)
                                     requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
                             except: pass
@@ -1611,13 +1653,26 @@ elif page == t["rep"]:
 
 # --- PAGE 5: AI RESTOCK ADVISOR ---
 elif page == t["ai"]:
-    st.title(t["supply_chain_title"])
-    st.markdown(f'<div class="ai-card"><h4>{t["ai_card_title"]}</h4><p>{t["ai_card_desc"]}</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="margin-bottom: 10px; font-weight: 800; font-size: 32px; letter-spacing: -1px; background: linear-gradient(90deg, #1e293b, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">{t["supply_chain_title"]}</div>', unsafe_allow_html=True)
+    
+    # Premium Animated Card
+    st.markdown(f"""
+        <div class="ai-card">
+            <h4>✨ {t["ai_card_title"]}</h4>
+            <div style="width: 50px; height: 3px; background: rgba(255,255,255,0.5); margin: 15px 0;"></div>
+            <p>{t["ai_card_desc"]}</p>
+        </div>
+    """, unsafe_allow_html=True)
     
     if not ai_model:
         st.error(t["ai_key_missing"])
     else:
-        if st.button(t["generate_report"], type="primary"):
+        # Center the generation button
+        _, center_col, _ = st.columns([1, 2, 1])
+        with center_col:
+            ai_trigger = st.button(t["generate_report"], type="primary", use_container_width=True)
+            
+        if ai_trigger:
             with st.spinner(t["ai_spinner"]):
                 try:
                     live_stock = df.to_csv(index=False) if not df.empty else "No live stock data."
