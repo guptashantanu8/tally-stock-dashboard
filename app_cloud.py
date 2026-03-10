@@ -140,7 +140,7 @@ stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, 
 # --- CONFIGURE GEMINI AI ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-2.5-flash')
+    ai_model = genai.GenerativeModel('gemini-2.5-pro')
 except:
     ai_model = None
 
@@ -552,6 +552,8 @@ LANG = {
         "failed_update": "Failed to update: {err}",
         "order_deleted": "Order Deleted!",
         "failed_delete": "Failed to delete: {err}",
+        "approve_payment": "✅ Payment Received / Allow Delivery",
+        "approve_success": "Order marked as pending for delivery!",
         "order_completed": "Order Completed!",
         "adv_filters": "🔎 Advanced Filters & Search",
         "search_name_id": "Search (Name, ID, Notes)",
@@ -775,7 +777,9 @@ LANG = {
         "order_updated": "ऑर्डर अपडेट हो गया!",
         "failed_update": "अपडेट विफल: {err}",
         "order_deleted": "ऑर्डर हटा दिया गया!",
-        "failed_delete": "हटाना विफल: {err}",
+        "failed_delete": "हटाने में विफल: {err}",
+        "approve_payment": "✅ पेमेंट प्राप्त / डिलीवरी की अनुमति",
+        "approve_success": "ऑर्डर को डिलीवरी के लिए पेंडिंग में डाल दिया गया!",
         "order_completed": "ऑर्डर पूरा हो गया!",
         "adv_filters": "🔎 एडवांस फ़िल्टर और खोज",
         "search_name_id": "खोजें (नाम, आईडी, नोट्स)",
@@ -1287,6 +1291,28 @@ elif page == t["ord"]:
                 else:
                     # Standard UI for manual orders
                     st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
+                
+                if is_tally:
+                    if st.button(t.get("approve_payment", "✅ Payment Received / Allow Delivery"), key=f"tally_aprv_{row['Order ID']}_{idx}", type="primary", use_container_width=True):
+                        try:
+                            cell = orders_sheet.find(row['Order ID'], in_column=1)
+                            orders_sheet.update_cell(cell.row, 5, 'Pending')
+                            
+                            try:
+                                tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
+                                tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+                                if tg_token and tg_chat_id:
+                                    comp_text = f"✅ *PAYMENT RECEIVED / DELIVERY APPROVED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Approved By: {st.session_state.user_name}\n👑 Placed by: Super Admin"
+                                    comp_text += f"\n\n── हिंदी ──\n✅ *पेमेंट प्राप्त / डिलीवरी की अनुमति* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 स्वीकृत: {st.session_state.user_name}\n👑 द्वारा: सुपर एडमिन (Super Admin)"
+                                    encoded_comp = urllib.parse.quote(comp_text)
+                                    requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
+                            except: pass
+                            
+                            st.success(t.get("approve_success", "Order marked as pending for delivery!"))
+                            fetch_orders_cache.clear()
+                            st.rerun()
+                        except Exception as e: st.error(f"Error: {e}")
+
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button(t["mark_complete"], key=f"btn_{row['Order ID']}_{idx}"):
