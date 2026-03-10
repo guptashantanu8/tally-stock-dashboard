@@ -227,7 +227,7 @@ if not st.session_state.logged_in:
         new_lang_login = "Hindi" if st.toggle("हिंदी / Eng", value=is_hindi_login, key="login_lang") else "English"
         if new_lang_login != st.session_state.app_lang:
             st.session_state.app_lang = new_lang_login
-            cookie_manager.set("mt_lang", new_lang_login)
+            cookie_manager.set("mt_lang", new_lang_login, expires_at=datetime.now() + timedelta(days=30))
             st.rerun()
 
     st.markdown(f"<h1 style='text-align: center; color: #333; margin-top: 50px;'>{_lt['title']}</h1>", unsafe_allow_html=True)
@@ -945,7 +945,7 @@ with lang_col2:
     # If the user flips the switch, save to cookie and reload the app
     if new_lang != st.session_state.app_lang:
         st.session_state.app_lang = new_lang
-        cookie_manager.set("mt_lang", new_lang)
+        cookie_manager.set("mt_lang", new_lang, expires_at=datetime.now() + timedelta(days=30))
         st.rerun()
 
 # Build the page list using our Dictionary (t)
@@ -1056,20 +1056,28 @@ elif page == t["ord"]:
         try:
             cust_data = fetch_basic_records(cust_sheet, "Customers")
             customer_list = sorted(list(set([str(row['Customer Name']).strip() for row in cust_data if 'Customer Name' in row and str(row['Customer Name']).strip()])))
+            
+            # 🟢 Build display labels for customers (Hindi if needed, but always store English)
             if st.session_state.get('app_lang') == 'Hindi':
-                customer_list = [hindi(c) for c in customer_list]
-        except: customer_list = []
+                cust_display = [hindi(c) for c in customer_list]
+            else:
+                cust_display = list(customer_list)
+            cust_display_to_real = dict(zip(cust_display, customer_list))
+        except: 
+            customer_list = []
+            cust_display = []
+            cust_display_to_real = {}
             
         st.subheader(t["create_order"])
         st.write(t["customer_details"])
         
         # Notice how every input now has f"_{r_key}" attached to it!
-        customer_dropdown = st.selectbox(t["search_customer"], customer_list, index=None, placeholder=t["search_customer_ph"], key=f"order_cust_drop_{r_key}")
+        customer_dropdown_display = st.selectbox(t["search_customer"], cust_display, index=None, placeholder=t["search_customer_ph"], key=f"order_cust_drop_{r_key}")
         
-        if not customer_dropdown: 
+        if not customer_dropdown_display: 
             customer_name = st.text_input(t["new_customer_name"], placeholder=t["new_customer_ph"], key=f"order_cust_text_{r_key}")
         else: 
-            customer_name = customer_dropdown
+            customer_name = cust_display_to_real.get(customer_dropdown_display, customer_dropdown_display)
             
         order_notes = st.text_input(t["order_notes_label"], placeholder=t["order_notes_ph"], key=f"order_notes_{r_key}")
         
