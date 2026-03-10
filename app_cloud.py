@@ -238,9 +238,14 @@ if not st.session_state.logged_in:
     
     if st.button(_lt["btn"], type="primary", use_container_width=True):
         if users_sheet:
-            users_data = fetch_basic_records(users_sheet, "Users")
+            try:
+                users_data = fetch_basic_records(users_sheet, "Users")
+            except Exception:
+                users_data = None
+                st.error("⚠️ Temporary connection issue. Please try again in a few seconds.")
             if not users_data:
-                st.error(_lt["empty"])
+                if users_data is not None:
+                    st.error(_lt["empty"])
             else:
                 df_users = pd.DataFrame(users_data)
                 df_users.columns = df_users.columns.astype(str).str.strip()
@@ -287,8 +292,18 @@ def fetch_stock_cache(_sheet):
         if not data: return pd.DataFrame()
         headers = [str(h).strip() for h in data[0]]
         
-        # 🟢 FRESHNESS TRACKER
-        st.session_state.stock_last_synced = datetime.now()
+        # 🟢 FRESHNESS TRACKER (IST)
+        st.session_state.stock_last_synced = datetime.now(IST)
+        
+        # 🟢 TALLY SYNC TIMESTAMP — extract from last header column (e.g. "Last Updated: 2026-03-06 16:56:08")
+        st.session_state.tally_last_synced = None
+        for h in headers:
+            if h.startswith('Last Updated:'):
+                try:
+                    ts_str = h.split(':', 1)[1].strip()
+                    st.session_state.tally_last_synced = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=IST)
+                except Exception:
+                    pass
         
         # 🟢 THE FIX: If there are only headers and no data yet, keep the headers!
         if len(data) == 1: return pd.DataFrame(columns=headers)
@@ -411,6 +426,10 @@ def generate_html_table(details_str):
     return html
 
 def create_order_pdf(row):
+    def _safe(text):
+        """Sanitize text for FPDF's built-in fonts (latin-1 only)."""
+        return str(text).encode('latin-1', 'replace').decode('latin-1')
+    
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("helvetica", "B", 20)
@@ -422,24 +441,24 @@ def create_order_pdf(row):
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(40, 8, "Order ID:", 0, 0)
     pdf.set_font("helvetica", "", 12)
-    pdf.cell(0, 8, str(row.get('Order ID', '')), ln=True)
+    pdf.cell(0, 8, _safe(row.get('Order ID', '')), ln=True)
     
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(40, 8, "Date (IST):", 0, 0)
     pdf.set_font("helvetica", "", 12)
-    pdf.cell(0, 8, str(row.get('Date', '')), ln=True)
+    pdf.cell(0, 8, _safe(row.get('Date', '')), ln=True)
     
     pdf.set_font("helvetica", "B", 12)
     pdf.cell(40, 8, "Customer:", 0, 0)
     pdf.set_font("helvetica", "", 12)
-    pdf.cell(0, 8, str(row.get('Customer Name', '')), ln=True)
+    pdf.cell(0, 8, _safe(row.get('Customer Name', '')), ln=True)
     
     notes = str(row.get('Notes', '')).strip()
     if notes and notes != 'None':
         pdf.set_font("helvetica", "B", 12)
         pdf.cell(40, 8, "Notes:", 0, 0)
         pdf.set_font("helvetica", "", 12)
-        pdf.multi_cell(0, 8, notes)
+        pdf.multi_cell(0, 8, _safe(notes))
         
     pdf.ln(10)
     pdf.set_font("helvetica", "B", 14)
@@ -448,8 +467,7 @@ def create_order_pdf(row):
     
     items = str(row.get('Order Details', '')).split(" | ")
     for item in items:
-        clean_item = item.encode('latin-1', 'replace').decode('latin-1')
-        pdf.cell(0, 8, f"- {clean_item}", ln=True)
+        pdf.cell(0, 8, f"- {_safe(item)}", ln=True)
         
     return bytes(pdf.output())
 
@@ -970,10 +988,12 @@ st.divider()
 if page == t["inv"]:
     st.header(t["inv"])
     
-    # 🟢 DATA FRESHNESS INDICATOR
+    # 🟢 DATA FRESHNESS INDICATOR (IST)
     if 'stock_last_synced' in st.session_state and not df.empty:
-        sync_time = st.session_state.stock_last_synced.strftime("%I:%M %p")
-        st.markdown(f"<div style='margin-top:-10px; margin-bottom:15px; font-size:14px; color:#10b981; font-weight:500;'>🟢 Live Stock Last Synced: {sync_time}</div>", unsafe_allow_html=True)
+        sync_time = st.session_state.stock_last_synced.strftime("%I:%M %p IST")
+        tally_ts = st.session_state.get('tally_last_synced')
+        tally_text = tally_ts.strftime("%d-%b-%Y %I:%M %p IST") if tally_ts else "Unknown"
+        st.markdown(f"<div style='margin-top:-10px; margin-bottom:15px; font-size:13px; color:#10b981; font-weight:500;'>🟢 App Cache Refreshed: {sync_time} &nbsp;|&nbsp; 📡 Tally Synced Database: {tally_text}</div>", unsafe_allow_html=True)
     elif df.empty:
         st.markdown("<div style='margin-top:-10px; margin-bottom:15px; font-size:14px; color:#ef4444; font-weight:500;'>🔴 Sync Disconnected (No Data)</div>", unsafe_allow_html=True)
 
@@ -1263,7 +1283,7 @@ elif page == t["ord"]:
                 with c1:
                     if st.button(t["mark_complete"], key=f"btn_{row['Order ID']}_{idx}"):
                         try:
-                            cell = orders_sheet.find(row['Order ID'])
+                            cell = orders_sheet.find(row['Order ID'], in_column=1)
                             orders_sheet.update_cell(cell.row, 5, 'Completed')
                             orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
                             
@@ -1322,7 +1342,7 @@ elif page == t["ord"]:
                                 st.error("You must have at least one item in the order.")
                             else:
                                 try:
-                                    cell = orders_sheet.find(row['Order ID'])
+                                    cell = orders_sheet.find(row['Order ID'], in_column=1)
                                     orders_sheet.update_cell(cell.row, 3, mod_cust)
                                     orders_sheet.update_cell(cell.row, 4, reconstructed_details)
                                     orders_sheet.update_cell(cell.row, 7, mod_notes)
@@ -1333,7 +1353,7 @@ elif page == t["ord"]:
                     with ec2:
                         if st.button(t["delete_order"], key=f"mdel_{row['Order ID']}_{idx}"):
                             try:
-                                cell = orders_sheet.find(row['Order ID'])
+                                cell = orders_sheet.find(row['Order ID'], in_column=1)
                                 orders_sheet.delete_rows(cell.row)
                                 st.warning(t["order_deleted"])
                                 fetch_orders_cache.clear()
@@ -1401,9 +1421,10 @@ elif page == t["ord"]:
                     if st.session_state.role == "Admin":
                         if st.button(t["delete_record"], key=f"del_comp_{row['Order ID']}_{idx}"):
                             try:
-                                cell = orders_sheet.find(row['Order ID'])
+                                cell = orders_sheet.find(row['Order ID'], in_column=1)
                                 orders_sheet.delete_rows(cell.row)
                                 st.warning(t["record_deleted"])
+                                fetch_orders_cache.clear()
                                 st.rerun()
                             except Exception as e: st.error(t["failed_delete"].format(err=e))
 
@@ -1545,6 +1566,7 @@ elif page == t["rep"]:
                         for cell in cell_list:
                             if cell.col == 6:
                                 audit_sheet.update_cell(cell.row, 6, "Closed")
+                        fetch_basic_records.clear()
                         st.success(t["archive_success"])
                         time.sleep(2)
                         st.rerun()
@@ -1647,7 +1669,7 @@ elif page == t["admin"]:
                             
                             if st.button(btn_label, key=f"togg_usr_{u_id}", use_container_width=True, type=btn_type):
                                 new_val = "Revoked" if u_status != 'Revoked' else "Active"
-                                cell = users_sheet.find(u_id)
+                                cell = users_sheet.find(u_id, in_column=1)
                                 users_sheet.update_cell(cell.row, status_col_idx, new_val)
                                 fetch_basic_records.clear()
                                 st.rerun()
@@ -1851,6 +1873,7 @@ elif page == t["rent"]:
                     if st.form_submit_button(t["save_payment"], type="primary"):
                         timestamp = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
                         rent_tx_sheet.append_row([timestamp, p_tenant, "Payment", "Rent", float(p_amt), "", p_notes, st.session_state.user_name])
+                        fetch_rent_cache.clear()
                         
                         # 🟢 OPTIMISTIC UI: Instant Update
                         if 'optimistic_rent_tx' not in st.session_state: st.session_state.optimistic_rent_tx = []
@@ -1925,9 +1948,10 @@ elif page == t["rent"]:
                                 rent_tx_sheet.append_row([timestamp, bill_tenant, "Charge", "Electricity", float(e_amt_final), float(units) if units > 0 else "", bill_notes, st.session_state.user_name])
                                 st.session_state.optimistic_rent_tx.append({"Date": timestamp, "Tenant Name": bill_tenant, "Type": "Charge", "Category": "Electricity", "Amount": float(e_amt_final), "Meter Details": float(units) if units > 0 else "", "Notes": bill_notes, "Recorded By": st.session_state.user_name})
                                 if e_type in ['Variable', 'Variable (Meter)']:
-                                    t_cell = tenants_sheet.find(str(t_data['Tenant ID']))
+                                    t_cell = tenants_sheet.find(str(t_data['Tenant ID']), in_column=1)
                                     tenants_sheet.update_cell(t_cell.row, 8, float(new_meter))
                                         
+                            fetch_rent_cache.clear()
                             st.success(t["charges_posted"])
                             st.rerun()
                         except Exception as e: st.error(t["error_posting"].format(err=e))
@@ -2070,7 +2094,7 @@ elif page == t["rent"]:
                             
                             if st.form_submit_button(t["save_all"], type="primary"):
                                 try:
-                                    cell = tenants_sheet.find(str(row['Tenant ID']))
+                                    cell = tenants_sheet.find(str(row['Tenant ID']), in_column=1)
                                     tenants_sheet.update_cell(cell.row, 3, e_loc)
                                     tenants_sheet.update_cell(cell.row, 4, float(e_rent))
                                     tenants_sheet.update_cell(cell.row, 5, e_etype_new)
@@ -2078,6 +2102,7 @@ elif page == t["rent"]:
                                     tenants_sheet.update_cell(cell.row, 9, float(e_sec))
                                     tenants_sheet.update_cell(cell.row, 11, e_prorata)
                                     tenants_sheet.update_cell(cell.row, 12, e_status)
+                                    fetch_rent_cache.clear()
                                     
                                     st.success(t["tenant_updated"].format(name=row['Name']))
                                     st.rerun()
