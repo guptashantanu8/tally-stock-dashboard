@@ -1071,47 +1071,39 @@ elif page == t["ord"]:
         
         # Filter out items already in cart
         available_items = [i for i in item_list if i not in st.session_state.order_cart]
-        display_available = [hindi(i) for i in available_items] if st.session_state.get('app_lang') == 'Hindi' else available_items
-        display_to_real_item = dict(zip(display_available, available_items))
         
         # 🟢 Sorting based on Stock Priority
         item_qty_map = dict(zip(df['Item'], df['Quantity'])) if not df.empty else {}
-        def stock_priority(d_item):
-            qty = item_qty_map.get(display_to_real_item[d_item], 0)
+        def stock_priority(item):
+            qty = item_qty_map.get(item, 0)
             if qty > 0: return 0
             elif qty < 0: return 1
             else: return 2
             
-        display_available = sorted(display_available, key=stock_priority)
+        available_items = sorted(available_items, key=stock_priority)
         
-        # 🟢 Custom Fuzzy Search Logic for Items (Handles out-of-order words)
-        sc1, sc2 = st.columns([1, 1])
-        with sc1:
-            search_query = st.text_input(t.get("search_keyword", "🔍 Search Keyword"), placeholder="e.g. 1000D PU... (Optional)", key=f"search_item_{r_key}").strip()
+        # 🟢 Build dual-language display labels for the single unified selectbox
+        is_hindi = st.session_state.get('app_lang') == 'Hindi'
+        display_options = []
+        display_to_real_item = {}
+        for item in available_items:
+            if is_hindi:
+                h_name = hindi(item)
+                label = f"{h_name} ({item})" if h_name != item else item
+            else:
+                label = item
+            display_options.append(label)
+            display_to_real_item[label] = item
         
-        filtered_display = display_available
-        if search_query:
-            # Split search query into individual words (e.g. "pu 1000" -> ["pu", "1000"])
-            search_words = [w.lower() for w in search_query.split()]
-            
-            # Keep items that contain ALL the search words (in any order)
-            filtered_display = []
-            for d_item in display_available:
-                # We search against both the display name (Hindi/English) AND the underlying real name (English)
-                real_name = display_to_real_item[d_item]
-                combined_search_text = f"{d_item.lower()} {real_name.lower()}"
-                
-                if all(word in combined_search_text for word in search_words):
-                    filtered_display.append(d_item)
+        # 🟢 SINGLE UNIFIED SELECTBOX — Streamlit's native type-to-search handles filtering
+        pick_display = st.selectbox(
+            t.get("select_match", "🎯 Search & Select Item"),
+            display_options,
+            index=None,
+            placeholder=t.get("search_keyword", "Type to search..."),
+            key=f"unified_item_{r_key}"
+        )
         
-        pick_display = None
-        with sc2:
-            if filtered_display:
-                # Show top 50 results max to keep UI clean
-                pick_display = st.selectbox(t.get("select_match", "🎯 Select Match:"), filtered_display[:50], index=0, key=f"radio_item_{r_key}")
-            elif search_query:
-                st.warning("⚠️ No matches.")
-            
         pick_item = display_to_real_item.get(pick_display) if pick_display else None
         
         if pick_item:
@@ -1994,6 +1986,13 @@ elif page == t["rent"]:
                     with k2: apply_prorata = st.selectbox(t["billing_logic"], [t["pro_rata_option"], t["fixed_cycle_option"]])
                     pr_val = "Yes" if t["pro_rata_option"] in apply_prorata else "No"
                     
+                    # 🟢 OPENING BALANCE (Paper-to-Digital Migration)
+                    st.divider()
+                    st.write("💰 **Opening Balance** (for migrating existing dues/advances)")
+                    ob1, ob2 = st.columns(2)
+                    with ob1: opening_balance = st.number_input("Opening Balance (₹)", min_value=0.0, step=500.0, value=0.0)
+                    with ob2: balance_type = st.selectbox("Balance Type", ["Tenant Owes (Due)", "Tenant Paid in Advance (Credit)"])
+                    
                     if st.form_submit_button(t["create_tenant"], type="primary"):
                         if nt_name:
                             tenants_sheet.append_row([t_id, nt_name, nt_loc, float(nt_rent), nt_etype, float(nt_erate), nt_epaid, float(nt_meter), float(nt_security), str(start_date), pr_val, "Active"])
@@ -2006,19 +2005,35 @@ elif page == t["rent"]:
                                 "Billing Start Date": str(start_date), "Pro Rata": pr_val, "Status": "Active"
                             })
                             
+                            now = datetime.now(IST)
+                            timestamp = now.strftime("%d-%m-%Y %I:%M %p")
+                            if 'optimistic_rent_tx' not in st.session_state: st.session_state.optimistic_rent_tx = []
+                            
+                            # 🟢 LOG OPENING BALANCE as a transaction
+                            if opening_balance > 0:
+                                ob_type = "Charge" if balance_type == "Tenant Owes (Due)" else "Payment"
+                                ob_note = "Opening balance migrated from paper records"
+                                
+                                rent_tx_sheet.append_row([
+                                    timestamp, nt_name, ob_type, "Opening Balance", float(opening_balance), "",
+                                    ob_note, st.session_state.user_name
+                                ])
+                                st.session_state.optimistic_rent_tx.append({
+                                    "Date": timestamp, "Tenant Name": nt_name, "Type": ob_type, 
+                                    "Category": "Opening Balance", "Amount": float(opening_balance), 
+                                    "Meter Details": "", "Notes": ob_note, "Recorded By": st.session_state.user_name
+                                })
+                            
+                            # 🟢 PRO-RATA RENT (existing logic preserved)
                             if pr_val == "Yes" and nt_rent > 0:
-                                now = datetime.now(IST)
                                 days_in_month = calendar.monthrange(now.year, now.month)[1]
                                 days_active = days_in_month - start_date.day + 1
                                 pro_rata_rent = round((float(nt_rent) / days_in_month) * days_active, 2)
                                 
-                                timestamp = now.strftime("%d-%m-%Y %I:%M %p")
                                 rent_tx_sheet.append_row([
                                     timestamp, nt_name, "Charge", "Rent (Pro-Rata)", float(pro_rata_rent), "",
                                     f"Pro-rata rent for {days_active} days in {now.strftime('%b %Y')}", st.session_state.user_name
                                 ])
-                                
-                                if 'optimistic_rent_tx' not in st.session_state: st.session_state.optimistic_rent_tx = []
                                 st.session_state.optimistic_rent_tx.append({"Date": timestamp, "Tenant Name": nt_name, "Type": "Charge", "Category": "Rent (Pro-Rata)", "Amount": float(pro_rata_rent), "Meter Details": "", "Notes": f"Pro-rata rent...", "Recorded By": st.session_state.user_name})
                                 
                                 st.success(t["tenant_added_prorata"].format(amt=pro_rata_rent))
