@@ -8,7 +8,6 @@ import time
 from datetime import datetime, timedelta
 import pytz
 import uuid
-
 from fpdf import FPDF
 import urllib.parse
 import requests
@@ -1240,7 +1239,8 @@ elif page == t["ord"]:
                     today_orders = orders_df[orders_df['Order ID'].astype(str).str.startswith(today_prefix)]
                     if not today_orders.empty: next_x = len(today_orders) + 1
                 
-                order_id = f"{today_prefix}{next_x}"
+                import random
+                order_id = f"{today_prefix}{next_x}.{random.randint(10,99)}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 try:
                     orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
@@ -1328,14 +1328,21 @@ elif page == t["ord"]:
             for idx, row in combined_pending.iterrows():
                 is_tally = row['Status'] == 'Pending - Awaited Payment'
                 
+                # 🟢 Format date as "dd Month" (e.g. "16 March")
+                try:
+                    _parsed_dt = datetime.strptime(str(row.get('Date', '')).strip(), "%d-%m-%Y %I:%M %p")
+                    _disp_date = _parsed_dt.strftime("%d %B")
+                except Exception:
+                    _disp_date = str(row.get('Date', ''))
+                
                 if is_tally:
                     # Custom UI for Tally auto-pulled orders
                     card_style = "background-color: #fee2e2; border: 2px solid #b91c1c; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"
                     tag_html = '<div style="background-color: #ef4444; color: white; padding: 5px 10px; border-radius: 4px; display: inline-block; font-weight: bold; margin-bottom: 10px; font-size: 14px;">🚨 NO DELIVERY UNTIL PAYMENT RECEIVED</div><br>'
-                    st.markdown(f'<div style="{card_style}">{tag_html}<h4 style="margin-top:0; color:#991b1b;">Order {row["Order ID"]} (Tally Sync)</h4><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div style="{card_style}">{tag_html}<h4 style="margin-top:0; color:#991b1b;">Order {row["Order ID"]} (Tally Sync)</h4><b>📅 Date:</b> {_disp_date}<br><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
                 else:
                     # Standard UI for manual orders
-                    st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="order-card"><h4 style="margin-top:0; color:#0056b3;">Order {row["Order ID"]}</h4><b>📅 Date:</b> {_disp_date}<br><b>Customer:</b> {hindi(str(row["Customer Name"]))}<br><b>Notes:</b> {hindi(str(row.get("Notes", "None")))}<br>{generate_html_table(row["Order Details"])}</div>', unsafe_allow_html=True)
                 
                 if is_tally:
                     if st.button(t.get("approve_payment", "✅ Payment Received / Allow Delivery"), key=f"tally_aprv_{row['Order ID']}_{idx}", type="primary", use_container_width=True):
