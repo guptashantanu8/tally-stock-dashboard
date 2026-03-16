@@ -2225,8 +2225,10 @@ elif page == "🧾 Generate Invoice":
                 inv_meta = invoices_sheet.get('N2')
                 if inv_meta and inv_meta[0]:
                     next_inv_number = str(inv_meta[0][0]).strip()
-        except:
-            pass
+            else:
+                st.warning("⚠️ 'Invoices' sheet not found. Using default invoice number.")
+        except Exception as inv_err:
+            st.warning(f"⚠️ Could not load invoice number: {inv_err}")
         st.info(f"📌 **Next Invoice Number:** `{next_inv_number}`")
 
         st.divider()
@@ -2239,16 +2241,30 @@ elif page == "🧾 Generate Invoice":
         # Load Manglam Customers
         manglam_customers = []
         manglam_cust_df = pd.DataFrame()
-        try:
-            if manglam_cust_sheet:
+        if not manglam_cust_sheet:
+            st.warning("⚠️ 'Manglam Customers' sheet not found. Please check Google Sheets.")
+        else:
+            try:
                 mc_data = fetch_basic_records(manglam_cust_sheet, "Manglam Customers")
                 if mc_data:
                     manglam_cust_df = pd.DataFrame(mc_data)
                     manglam_cust_df.columns = manglam_cust_df.columns.astype(str).str.strip()
-                    if 'Customer Name' in manglam_cust_df.columns:
-                        manglam_customers = sorted(manglam_cust_df['Customer Name'].dropna().unique().tolist())
-        except:
-            pass
+                    # Robust column matching: find 'Customer Name' case-insensitively
+                    cust_name_col = None
+                    for col in manglam_cust_df.columns:
+                        if col.lower().replace(" ", "") in ("customername", "customer_name", "name", "customer"):
+                            cust_name_col = col
+                            break
+                    if cust_name_col:
+                        manglam_cust_df = manglam_cust_df.rename(columns={cust_name_col: "Customer Name"})
+                        manglam_customers = sorted(manglam_cust_df['Customer Name'].dropna().astype(str).str.strip().unique().tolist())
+                        manglam_customers = [c for c in manglam_customers if c]  # remove empty strings
+                    else:
+                        st.warning(f"⚠️ Could not find 'Customer Name' column. Found columns: {list(manglam_cust_df.columns)}")
+                else:
+                    st.info("ℹ️ 'Manglam Customers' sheet is empty. Add customers to the sheet first.")
+            except Exception as e:
+                st.error(f"❌ Error loading customer data: {e}")
 
         create_new = st.toggle("➕ Create New Customer", value=False, key="inv_new_cust_toggle")
 
@@ -2278,13 +2294,20 @@ elif page == "🧾 Generate Invoice":
                                             format_func=lambda i: filtered_customers[i], key="inv_cust_select")
                 inv_cust_name = filtered_customers[selected_idx]
 
-                # Auto-fill from sheet data
+                # Auto-fill from sheet data (robust column lookup)
                 cust_row = manglam_cust_df[manglam_cust_df['Customer Name'] == inv_cust_name]
                 if not cust_row.empty:
-                    inv_cust_addr = str(cust_row.iloc[0].get('Address', '')).strip()
-                    inv_cust_gstin = str(cust_row.iloc[0].get('GSTIN', '')).strip()
-                    inv_cust_pan = str(cust_row.iloc[0].get('PAN', '')).strip()
-                    inv_cust_contact = str(cust_row.iloc[0].get('Contact', '')).strip()
+                    _r = cust_row.iloc[0]
+                    _cols = {c.lower().strip(): c for c in manglam_cust_df.columns}
+                    def _get_col(keys, default=''):
+                        for k in keys:
+                            if k.lower() in _cols:
+                                return str(_r.get(_cols[k.lower()], default)).strip()
+                        return default
+                    inv_cust_addr = _get_col(['Address', 'Billing Address', 'address'])
+                    inv_cust_gstin = _get_col(['GSTIN', 'GST No', 'GST Number', 'gstin'])
+                    inv_cust_pan = _get_col(['PAN', 'PAN No', 'PAN Number', 'pan'])
+                    inv_cust_contact = _get_col(['Contact', 'Phone', 'Mobile', 'Contact Number', 'contact'])
                 else:
                     inv_cust_addr = inv_cust_gstin = inv_cust_pan = inv_cust_contact = ""
 
