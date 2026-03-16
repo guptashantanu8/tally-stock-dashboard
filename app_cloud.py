@@ -438,8 +438,8 @@ if not df.empty and 'Quantity' in df.columns and 'Item Name' in df.columns:
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
     if 'Unit' not in df.columns: df['Unit'] = ''
     df['Unit'] = df['Unit'].fillna('')
-    # 🟢 UNIT CLEANUP: Replace generic 'unit'/'units' with blank
-    df['Unit'] = df['Unit'].apply(lambda u: '' if str(u).strip().lower() in ('unit', 'units') else u)
+    # Ensure missing units default to 'units' rather than blank
+    df['Unit'] = df['Unit'].replace('', 'units')
     df['Item'] = df['Item Name']
     if 'Group' not in df.columns: df['Group'] = 'Default'
     df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
