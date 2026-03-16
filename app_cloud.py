@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 import pytz
 import uuid
-import google.generativeai as genai
+
 from fpdf import FPDF
 import urllib.parse
 import requests
@@ -159,20 +159,17 @@ def get_gspread_client():
             safe_open("Master Items"),
             safe_open("Tenants"),
             safe_open("Rent Transactions"),
-            safe_open("Archived Orders")
+            safe_open("Archived Orders"),
+            safe_open("Invoices"),
+            safe_open("Manglam Customers")
         )
     except Exception as e:
         st.error(f"Failed to connect to Google Sheets: {e}")
-        return [None]*11
+        return [None]*13
 
-stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet, archive_sheet = get_gspread_client()
+stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet, archive_sheet, invoices_sheet, manglam_cust_sheet = get_gspread_client()
 
-# --- CONFIGURE GEMINI AI ---
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-2.5-pro')
-except:
-    ai_model = None
+
 
 # --- COOKIE MANAGER & SESSION STATE ---
 cookie_manager = stx.CookieManager(key="mt_cookie_manager")
@@ -196,6 +193,17 @@ if not st.session_state.logged_in:
             st.session_state.user_name = parts[1]
             st.session_state.role = parts[2]
             st.rerun()
+
+# ==========================================
+# 🟢 EARLY FUNCTION: Needed by the auth check below
+# ==========================================
+@st.cache_data(ttl=300)
+def fetch_basic_records(_sheet, sheet_name):
+    """Aggressive 5-minute cache for static sheets like Users, Master Items, Tenants."""
+    try:
+        if _sheet is None: return []
+        return _sheet.get_all_records()
+    except Exception: return []
 
 # ==========================================
 # 🛑 INTERVAL AUTHENTICATION CHECK (THE "BOUNCER")
@@ -366,13 +374,7 @@ def fetch_rent_cache(_sheet, sheet_name): # 🟢 THE FIX: Added sheet_name so St
     except: return pd.DataFrame()
     
 
-@st.cache_data(ttl=300)
-def fetch_basic_records(_sheet, sheet_name):
-    """Aggressive 5-minute cache for static sheets like Users, Master Items, Tenants."""
-    try:
-        if _sheet is None: return []
-        return _sheet.get_all_records()
-    except: return []
+# fetch_basic_records is defined earlier (before the auth check) — see above
 
 # 🟢 HINDI DATA MAP — Reads the "Hindi Map" sheet for data translation
 @st.cache_data(ttl=300)
@@ -434,8 +436,10 @@ df = fetch_stock_cache(stock_sheet)
 # 🟢 THE FIX: Global Safety Net to prevent KeyErrors across all pages
 if not df.empty and 'Quantity' in df.columns and 'Item Name' in df.columns:
     df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
-    if 'Unit' not in df.columns: df['Unit'] = 'units'
-    df['Unit'] = df['Unit'].fillna('units')
+    if 'Unit' not in df.columns: df['Unit'] = ''
+    df['Unit'] = df['Unit'].fillna('')
+    # 🟢 UNIT CLEANUP: Replace generic 'unit'/'units' with blank
+    df['Unit'] = df['Unit'].apply(lambda u: '' if str(u).strip().lower() in ('unit', 'units') else u)
     df['Item'] = df['Item Name']
     if 'Group' not in df.columns: df['Group'] = 'Default'
     df['Display Qty'] = df['Quantity'].map('{:,.0f}'.format) + " " + df['Unit']
@@ -983,11 +987,12 @@ with lang_col2:
         st.rerun()
 
 # Build the page list using our Dictionary (t)
-pages = [t["inv"], t["ord"], t["aud"], t["ai"], t["rent"]]
+pages = [t["inv"], t["ord"], t["aud"], t["rent"]]
 
 if st.session_state.role == "Admin":
     pages.append(t["rep"])
     pages.append(t["admin"])
+    pages.append("🧾 Generate Invoice")
 
 # Sleek Top Header Box
 st.markdown(f"""
@@ -1047,12 +1052,18 @@ if page == t["inv"]:
         if selected_group != t["all_groups"]: filtered_df = filtered_df[filtered_df['Group'] == selected_group]
 
         total_qty = filtered_df['Quantity'].sum()
-        m1, m2 = st.columns(2)
-        m1.metric(t["volume_filtered"], f"{total_qty:,.0f}")
-        m2.metric(t["items_found"], len(filtered_df))
+        # 🟢 ROLE-BASED: Hide Total Quantity and Items Found for Employees
+        if st.session_state.role != "Employee":
+            m1, m2 = st.columns(2)
+            m1.metric(t["volume_filtered"], f"{total_qty:,.0f}")
+            m2.metric(t["items_found"], len(filtered_df))
 
         st.divider()
-        tab1, tab2 = st.tabs([t["bar_chart"], t["stock_list"]])
+        # 🟢 ROLE-BASED TABS: Admin sees Stock List first, Employee sees Bar Chart first
+        if st.session_state.role == "Admin":
+            tab2, tab1 = st.tabs([t["stock_list"], t["bar_chart"]])
+        else:
+            tab1, tab2 = st.tabs([t["bar_chart"], t["stock_list"]])
 
         with tab1:
             if not filtered_df.empty:
@@ -1075,11 +1086,15 @@ elif page == t["ord"]:
     if 'optimistic_orders' not in st.session_state:
         st.session_state.optimistic_orders = []
     
-    if st.session_state.optimistic_orders and not orders_df.empty:
+    if st.session_state.optimistic_orders:
         opt_df = pd.DataFrame(st.session_state.optimistic_orders)
         orders_df = pd.concat([opt_df, orders_df], ignore_index=True) # Put new ones at top
     
-    order_tab1, order_tab2, order_tab3 = st.tabs([t["place_order"], t["pending_orders"], t["completed_orders"]])
+    # 🟢 ROLE-BASED TABS: Employee sees Pending Orders first
+    if st.session_state.role == "Employee":
+        order_tab2, order_tab1, order_tab3 = st.tabs([t["pending_orders"], t["place_order"], t["completed_orders"]])
+    else:
+        order_tab1, order_tab2, order_tab3 = st.tabs([t["place_order"], t["pending_orders"], t["completed_orders"]])
     
     with order_tab1:
         # 🟢 THE FIX: Initialize a Master Reset Key
@@ -1357,26 +1372,68 @@ elif page == t["ord"]:
 
                 c1, c2 = st.columns([1, 1])
                 with c1:
-                    if st.button(t["mark_complete"], key=f"btn_{row['Order ID']}_{idx}"):
-                        try:
-                            cell = orders_sheet.find(row['Order ID'], in_column=1)
-                            orders_sheet.update_cell(cell.row, 5, 'Completed')
-                            orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
-                            
+                    # 🟢 ADMIN DELIVERY OVERRIDE: Admin selects which employee completed the order
+                    if st.session_state.role == "Admin":
+                        admin_assign_key = f"admin_assign_{row['Order ID']}_{idx}"
+                        if st.button(t["mark_complete"], key=f"btn_{row['Order ID']}_{idx}"):
+                            st.session_state[admin_assign_key] = True
+                        
+                        if st.session_state.get(admin_assign_key, False):
+                            # Load employee names from Users sheet
                             try:
-                                tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
-                                tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
-                                if tg_token and tg_chat_id:
-                                    comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Completed By: {st.session_state.user_name}"
-                                    comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 पूरा किया: {st.session_state.user_name}"
-                                    encoded_comp = urllib.parse.quote(comp_text)
-                                    requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
-                            except: pass
+                                _users_data = fetch_basic_records(users_sheet, "Users")
+                                _emp_names = sorted(list(set([str(u.get('Name', '')).strip() for u in _users_data if str(u.get('Name', '')).strip()])))
+                            except:
+                                _emp_names = [st.session_state.user_name]
                             
-                            st.success(t["order_completed"])
-                            fetch_orders_cache.clear()
-                            st.rerun()
-                        except Exception as e: st.error(f"Error: {e}")
+                            completed_by_name = st.selectbox(
+                                "👷 Select who delivered this order:",
+                                _emp_names,
+                                key=f"assign_emp_{row['Order ID']}_{idx}"
+                            )
+                            if st.button("✅ Confirm Delivery", key=f"confirm_del_{row['Order ID']}_{idx}", type="primary"):
+                                try:
+                                    cell = orders_sheet.find(row['Order ID'], in_column=1)
+                                    orders_sheet.update_cell(cell.row, 5, 'Completed')
+                                    orders_sheet.update_cell(cell.row, 6, completed_by_name)
+                                    
+                                    try:
+                                        tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
+                                        tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+                                        if tg_token and tg_chat_id:
+                                            comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Completed By: {completed_by_name}\n👑 Assigned By: {st.session_state.user_name}"
+                                            comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 पूरा किया: {completed_by_name}\n👑 द्वारा: {st.session_state.user_name}"
+                                            encoded_comp = urllib.parse.quote(comp_text)
+                                            requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
+                                    except: pass
+                                    
+                                    st.session_state[admin_assign_key] = False
+                                    st.success(t["order_completed"])
+                                    fetch_orders_cache.clear()
+                                    st.rerun()
+                                except Exception as e: st.error(f"Error: {e}")
+                    else:
+                        # Employee: instant complete under their own name
+                        if st.button(t["mark_complete"], key=f"btn_{row['Order ID']}_{idx}"):
+                            try:
+                                cell = orders_sheet.find(row['Order ID'], in_column=1)
+                                orders_sheet.update_cell(cell.row, 5, 'Completed')
+                                orders_sheet.update_cell(cell.row, 6, st.session_state.user_name)
+                                
+                                try:
+                                    tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
+                                    tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+                                    if tg_token and tg_chat_id:
+                                        comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Completed By: {st.session_state.user_name}"
+                                        comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 पूरा किया: {st.session_state.user_name}"
+                                        encoded_comp = urllib.parse.quote(comp_text)
+                                        requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
+                                except: pass
+                                
+                                st.success(t["order_completed"])
+                                fetch_orders_cache.clear()
+                                st.rerun()
+                            except Exception as e: st.error(f"Error: {e}")
                 with c2:
                     pdf_data = create_order_pdf(row)
                     st.download_button(t["share_pdf"], data=pdf_data, file_name=f"Order_{row['Order ID']}.pdf", mime="application/pdf", key=f"pdf_{row['Order ID']}_{idx}")
@@ -1457,7 +1514,7 @@ elif page == t["ord"]:
                     emp_filter = st.selectbox(t["completed_by"], emp_list, key="emp_comp")
                     
                 with fc4:
-                    item_list = [t["all_items_filter"]] + df['Item'].dropna().unique().tolist() if not df.empty else [t["all_items_filter"]]
+                    item_list = ([t["all_items_filter"]] + df['Item'].dropna().unique().tolist()) if not df.empty else [t["all_items_filter"]]
                     item_filter = st.selectbox(t["contains_fabric"], item_list, key="item_comp")
                 
                 with fc5:
@@ -1567,7 +1624,7 @@ elif page == t["aud"]:
                 submit_batch = st.form_submit_button(t["save_batch"], type="primary")
                 
                 if submit_batch:
-                    if qty < 0:
+                    if qty <= 0:
                         st.error(t["qty_negative"])
                     else:
                         timestamp = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
@@ -1651,61 +1708,9 @@ elif page == t["rep"]:
         else:
             st.info(t["no_audit_logs"])
 
-# --- PAGE 5: AI RESTOCK ADVISOR ---
-elif page == t["ai"]:
-    st.markdown(f'<div style="margin-bottom: 10px; font-weight: 800; font-size: 32px; letter-spacing: -1px; background: linear-gradient(90deg, #1e293b, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">{t["supply_chain_title"]}</div>', unsafe_allow_html=True)
-    
-    # Premium Animated Card
-    st.markdown(f"""
-        <div class="ai-card">
-            <h4>✨ {t["ai_card_title"]}</h4>
-            <div style="width: 50px; height: 3px; background: rgba(255,255,255,0.5); margin: 15px 0;"></div>
-            <p>{t["ai_card_desc"]}</p>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    if not ai_model:
-        st.error(t["ai_key_missing"])
-    else:
-        # Center the generation button
-        _, center_col, _ = st.columns([1, 2, 1])
-        with center_col:
-            ai_trigger = st.button(t["generate_report"], type="primary", use_container_width=True)
-            
-        if ai_trigger:
-            with st.spinner(t["ai_spinner"]):
-                try:
-                    live_stock = df.to_csv(index=False) if not df.empty else "No live stock data."
-                    try: restock_times = pd.DataFrame(fetch_basic_records(restock_sheet, "Restock Times")).to_csv(index=False)
-                    except: restock_times = "No restock lead times configured."
-                    try: recent_sales = pd.DataFrame(fetch_basic_records(sales_sheet, "15-Day Sales")).to_csv(index=False)
-                    except: recent_sales = "No recent sales data available."
-                    
-                    prompt = f"""
-                    You are an expert AI Supply Chain Manager for Manglam Tradelink (Brand: Nyc), manufacturing bags with fabrics like Twill, 1000D PU, 1000D PVC, etc.
-                    
-                    CRITICAL INSTRUCTION: You MUST give the HIGHEST PRIORITY to the "RECENT 15-DAY SALES (OUTWARD MOVEMENT)" data. 
-                    If an item is selling fast in the last 15 days, it needs to be reordered immediately to meet current demand velocity. Calculate the daily burn rate (15-Day Sales / 15) and multiply it by the Lead Time to determine if current stock is dangerously low.
-                    
-                    Analyze this data and write an executive advisory report grouped by urgency:
-                    1. 🔴 URGENT REORDER (Stock will likely run out before lead time finishes based on recent 15-day sales).
-                    2. 🟡 MONITOR CLOSELY (Selling steadily, reorder soon).
-                    3. 🟢 HEALTHY STOCK (Current stock easily covers recent velocity + lead time).
-                    
-                    CURRENT INVENTORY DATA:
-                    {live_stock}
-                    
-                    RECENT 15-DAY SALES (OUTWARD MOVEMENT):
-                    {recent_sales}
-                    
-                    CONFIGURED LEAD TIMES (Days to Restock):
-                    {restock_times}
-                    """
-                    response = ai_model.generate_content(prompt)
-                    st.markdown(t["restock_report_title"])
-                    st.write(response.text)
-                except Exception as e:
-                    st.error(t["ai_failed"].format(err=e))
+# --- PAGE 5: AI RESTOCK ADVISOR (REMOVED FOR DATA PRIVACY) ---
+# Gemini AI page has been removed to prevent confidential stock/sales data
+# from being sent to external LLM servers.
 
 # --- PAGE 6: ADMIN DASHBOARD ---
 elif page == t["admin"]:
@@ -1780,7 +1785,7 @@ elif page == t["admin"]:
                 if not all_orders:
                     st.info("No orders found to archive.")
                 else:
-                    cutoff = datetime.now(IST) - timedelta(days=30)
+                    cutoff = datetime.now() - timedelta(days=30)  # naive datetime to match strptime output
                     rows_to_archive = []
                     row_indices_to_delete = []  # 1-indexed (header = row 1)
                     
@@ -1791,7 +1796,7 @@ elif page == t["admin"]:
                                 if order_date < cutoff:
                                     rows_to_archive.append(list(row.values()))
                                     row_indices_to_delete.append(i + 2)  # +2 because header=1, data starts at 2
-                            except:
+                            except Exception:
                                 pass  # Skip rows with unparseable dates
                     
                     if not rows_to_archive:
@@ -1830,11 +1835,11 @@ elif page == t["rent"]:
         if 'optimistic_tenants' not in st.session_state:
             st.session_state.optimistic_tenants = []
             
-        if st.session_state.optimistic_rent_tx and not df_tx.empty:
+        if st.session_state.optimistic_rent_tx:
             opt_tx = pd.DataFrame(st.session_state.optimistic_rent_tx)
             df_tx = pd.concat([df_tx, opt_tx], ignore_index=True)
             
-        if st.session_state.optimistic_tenants and not df_tenants.empty:
+        if st.session_state.optimistic_tenants:
             opt_ten = pd.DataFrame(st.session_state.optimistic_tenants)
             df_tenants = pd.concat([df_tenants, opt_ten], ignore_index=True)
 
@@ -2198,25 +2203,424 @@ elif page == t["rent"]:
                                 except Exception as e:
                                     st.error(t["error_updating"].format(err=e))
 
+# ==========================================
+# PAGE: 🧾 GENERATE INVOICE (ADMIN ONLY)
+# ==========================================
+elif page == "🧾 Generate Invoice":
+    if st.session_state.role == "Admin":
+        st.header("🧾 Generate Invoice")
+        st.caption("Manglam Tradelink — GST Invoice Generator")
 
+        # --- Load Next Invoice Number from Invoices sheet ---
+        next_inv_number = "GST/25-26/0001"
+        try:
+            if invoices_sheet:
+                inv_meta = invoices_sheet.get('N2')
+                if inv_meta and inv_meta[0]:
+                    next_inv_number = str(inv_meta[0][0]).strip()
+        except:
+            pass
+        st.info(f"📌 **Next Invoice Number:** `{next_inv_number}`")
 
+        st.divider()
 
+        # ==========================================
+        # SECTION 1: CUSTOMER SELECTION
+        # ==========================================
+        st.subheader("👤 Customer Details")
 
+        # Load Manglam Customers
+        manglam_customers = []
+        manglam_cust_df = pd.DataFrame()
+        try:
+            if manglam_cust_sheet:
+                mc_data = fetch_basic_records(manglam_cust_sheet, "Manglam Customers")
+                if mc_data:
+                    manglam_cust_df = pd.DataFrame(mc_data)
+                    manglam_cust_df.columns = manglam_cust_df.columns.astype(str).str.strip()
+                    if 'Customer Name' in manglam_cust_df.columns:
+                        manglam_customers = sorted(manglam_cust_df['Customer Name'].dropna().unique().tolist())
+        except:
+            pass
 
+        create_new = st.toggle("➕ Create New Customer", value=False, key="inv_new_cust_toggle")
 
+        if create_new:
+            inv_cust_name = st.text_input("Customer Name", key="inv_new_name")
+            ic1, ic2 = st.columns(2)
+            with ic1:
+                inv_cust_addr = st.text_area("Billing Address", height=80, key="inv_new_addr")
+                inv_cust_gstin = st.text_input("GSTIN", key="inv_new_gstin")
+            with ic2:
+                inv_cust_pan = st.text_input("PAN", key="inv_new_pan")
+                inv_cust_contact = st.text_input("Contact Number", key="inv_new_contact")
+        else:
+            # Debounced searchable dropdown
+            if 'inv_search_term' not in st.session_state:
+                st.session_state.inv_search_term = ""
 
+            search_term = st.text_input("🔍 Search Customer", value=st.session_state.inv_search_term,
+                                        placeholder="Start typing to search...", key="inv_cust_search")
 
+            filtered_customers = manglam_customers
+            if search_term:
+                filtered_customers = [c for c in manglam_customers if search_term.lower() in c.lower()]
 
+            if filtered_customers:
+                selected_idx = st.selectbox("Select Customer", range(len(filtered_customers)),
+                                            format_func=lambda i: filtered_customers[i], key="inv_cust_select")
+                inv_cust_name = filtered_customers[selected_idx]
 
+                # Auto-fill from sheet data
+                cust_row = manglam_cust_df[manglam_cust_df['Customer Name'] == inv_cust_name]
+                if not cust_row.empty:
+                    inv_cust_addr = str(cust_row.iloc[0].get('Address', '')).strip()
+                    inv_cust_gstin = str(cust_row.iloc[0].get('GSTIN', '')).strip()
+                    inv_cust_pan = str(cust_row.iloc[0].get('PAN', '')).strip()
+                    inv_cust_contact = str(cust_row.iloc[0].get('Contact', '')).strip()
+                else:
+                    inv_cust_addr = inv_cust_gstin = inv_cust_pan = inv_cust_contact = ""
 
+                with st.expander("📝 Customer Info (auto-filled)", expanded=False):
+                    st.text(f"Address: {inv_cust_addr}")
+                    st.text(f"GSTIN: {inv_cust_gstin}  |  PAN: {inv_cust_pan}  |  Contact: {inv_cust_contact}")
+            else:
+                st.warning("No customers found. Toggle 'Create New Customer' to add one.")
+                inv_cust_name = inv_cust_addr = inv_cust_gstin = inv_cust_pan = inv_cust_contact = ""
 
+        st.divider()
 
+        # ==========================================
+        # SECTION 1.25: SHIP TO ADDRESS (Optional)
+        # ==========================================
+        ship_to_different = st.checkbox("📦 Shipping Address is different from Billing Address", key="inv_ship_toggle")
+        ship_to_name = ""
+        ship_to_addr = ""
+        ship_to_gstin = ""
+        if ship_to_different:
+            st.subheader("📦 Ship To Details")
+            st1, st2 = st.columns(2)
+            with st1:
+                ship_to_name = st.text_input("Ship To Name", key="inv_ship_name")
+                ship_to_addr = st.text_area("Ship To Address", height=80, key="inv_ship_addr")
+            with st2:
+                ship_to_gstin = st.text_input("Ship To GSTIN", key="inv_ship_gstin")
 
+        st.divider()
 
+        # ==========================================
+        # SECTION 1.5: DISPATCH DETAILS (Optional)
+        # ==========================================
+        st.subheader("🚚 Dispatch Details (Optional)")
+        disp1, disp2 = st.columns(2)
+        with disp1:
+            inv_eway_bill = st.text_input("e-Way Bill Number", key="inv_eway", placeholder="e.g. 1234 5678 9012")
+        with disp2:
+            inv_vehicle_no = st.text_input("Motor Vehicle Number", key="inv_vehicle", placeholder="e.g. DL 01 AB 1234")
 
+        st.divider()
 
+        # ==========================================
+        # SECTION 2: DYNAMIC ITEM CART
+        # ==========================================
+        st.subheader("🛒 Item Cart")
 
+        if 'invoice_items' not in st.session_state:
+            st.session_state.invoice_items = []
 
+        with st.form("add_item_form", clear_on_submit=True):
+            st.write("**Add an Item**")
+            ai1, ai2 = st.columns(2)
+            with ai1:
+                item_name = st.text_input("Item Name", key="inv_item_name")
+                hsn_code = st.text_input("HSN / SAC Code", key="inv_hsn")
+            with ai2:
+                item_qty = st.number_input("Quantity (SQM / Units)", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
+                item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key="inv_rate")
 
+            g1, g2 = st.columns(2)
+            with g1:
+                gst_type = st.selectbox("GST Type", ["Local (CGST + SGST)", "Interstate (IGST)"], key="inv_gst_type")
+            with g2:
+                gst_percent = st.selectbox("GST %", [5, 12, 18], index=2, key="inv_gst_pct")
 
+            add_item_btn = st.form_submit_button("➕ Add Item to Cart", type="primary")
+
+            if add_item_btn and item_name and item_qty > 0 and item_rate > 0:
+                st.session_state.invoice_items.append({
+                    "name": item_name,
+                    "hsn": hsn_code,
+                    "qty": item_qty,
+                    "rate": item_rate,
+                    "gst_type": gst_type,
+                    "gst_pct": gst_percent
+                })
+
+        # Display Cart Table
+        if st.session_state.invoice_items:
+            st.write("**Current Items:**")
+            cart_html = "<table class='order-table'><tr><th>#</th><th>Item</th><th>HSN</th><th>Qty</th><th>Rate</th><th>Taxable</th><th>GST</th><th>Total</th><th></th></tr>"
+            for idx, itm in enumerate(st.session_state.invoice_items):
+                taxable = itm['qty'] * itm['rate']
+                gst_amt = taxable * itm['gst_pct'] / 100
+                line_total = taxable + gst_amt
+                cart_html += f"<tr><td>{idx+1}</td><td><b>{itm['name']}</b></td><td>{itm['hsn']}</td><td>{itm['qty']:.2f}</td><td>₹{itm['rate']:.2f}</td><td>₹{taxable:,.2f}</td><td>{itm['gst_pct']}%</td><td>₹{line_total:,.2f}</td><td></td></tr>"
+            cart_html += "</table>"
+            st.markdown(cart_html, unsafe_allow_html=True)
+
+            # Remove item buttons
+            remove_cols = st.columns(min(len(st.session_state.invoice_items), 6))
+            for idx, itm in enumerate(st.session_state.invoice_items):
+                col_idx = idx % len(remove_cols)
+                with remove_cols[col_idx]:
+                    if st.button(f"❌ {itm['name'][:15]}", key=f"rm_inv_{idx}"):
+                        st.session_state.invoice_items.pop(idx)
+                        st.rerun()
+        else:
+            st.info("Cart is empty. Add items using the form above.")
+
+        st.divider()
+
+        # ==========================================
+        # SECTION 3: LIVE CALCULATIONS
+        # ==========================================
+        st.subheader("💰 Invoice Summary")
+
+        subtotal = 0.0
+        total_cgst = 0.0
+        total_sgst = 0.0
+        total_igst = 0.0
+
+        for itm in st.session_state.invoice_items:
+            taxable = itm['qty'] * itm['rate']
+            subtotal += taxable
+            gst_amt = taxable * itm['gst_pct'] / 100
+            if 'Local' in itm['gst_type']:
+                total_cgst += gst_amt / 2
+                total_sgst += gst_amt / 2
+            else:
+                total_igst += gst_amt
+
+        exact_total = subtotal + total_cgst + total_sgst + total_igst
+        grand_total = round(exact_total)
+        round_off = grand_total - exact_total
+
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Subtotal", f"₹{subtotal:,.2f}")
+        s2.metric("CGST", f"₹{total_cgst:,.2f}")
+        s3.metric("SGST", f"₹{total_sgst:,.2f}")
+
+        s4, s5, s6 = st.columns(3)
+        s4.metric("IGST", f"₹{total_igst:,.2f}")
+        s5.metric("Round Off", f"₹{round_off:,.2f}")
+        s6.metric("🎯 Grand Total", f"₹{grand_total:,.2f}")
+
+        st.divider()
+
+        # ==========================================
+        # SECTION 4: GENERATE & SAVE
+        # ==========================================
+        if st.button("🧾 Generate & Save Invoice", type="primary", use_container_width=True):
+            if not inv_cust_name:
+                st.error("Please select or enter a customer name.")
+            elif not st.session_state.invoice_items:
+                st.error("Please add at least one item to the cart.")
+            else:
+                try:
+                    import json as _json
+                    inv_date = datetime.now(IST).strftime("%d-%m-%Y %I:%M %p")
+                    inv_date_short = datetime.now(IST).strftime("%d-%b-%Y")
+                    items_json = _json.dumps(st.session_state.invoice_items, ensure_ascii=False)
+
+                    # Append row to Invoices sheet (includes Ship To fields)
+                    inv_row = [
+                        next_inv_number,
+                        inv_date,
+                        inv_cust_name,
+                        inv_cust_addr,
+                        inv_cust_gstin,
+                        items_json,
+                        round(subtotal, 2),
+                        round(total_cgst, 2),
+                        round(total_sgst, 2),
+                        round(total_igst, 2),
+                        round(round_off, 2),
+                        grand_total,
+                        st.session_state.user_name,
+                        "",  # N = Next Invoice Number (managed by sync)
+                        "",  # O = Last Synced (managed by sync)
+                        ship_to_name,    # P = Ship To Name
+                        ship_to_addr,    # Q = Ship To Address
+                        ship_to_gstin    # R = Ship To GSTIN
+                    ]
+
+                    if invoices_sheet:
+                        invoices_sheet.append_row(inv_row, value_input_option='USER_ENTERED')
+
+                        # Increment the Next Invoice Number in the sheet
+                        import re as _re
+                        num_match = _re.search(r'(.*?)(\d+)$', next_inv_number)
+                        if num_match:
+                            prefix = num_match.group(1)
+                            current_num = int(num_match.group(2))
+                            num_width = len(num_match.group(2))
+                            new_next = f"{prefix}{str(current_num + 1).zfill(num_width)}"
+                            invoices_sheet.update('N2', [[new_next]])
+                            invoices_sheet.update('O2', [[inv_date]])
+
+                        st.success(f"✅ Invoice **{next_inv_number}** saved successfully!")
+
+                        # --- Generate PDF for download ---
+                        try:
+                            from generate_invoice_pdf import generate_invoice as _gen_pdf
+
+                            # Determine dominant GST rates for the PDF summary
+                            _cgst_pct = ""
+                            _sgst_pct = ""
+                            _igst_pct = ""
+                            for _itm in st.session_state.invoice_items:
+                                if "Local" in _itm["gst_type"]:
+                                    _cgst_pct = str(_itm["gst_pct"] // 2)
+                                    _sgst_pct = str(_itm["gst_pct"] // 2)
+                                else:
+                                    _igst_pct = str(_itm["gst_pct"])
+
+                            pdf_data = {
+                                "buyer_name": inv_cust_name,
+                                "buyer_address": inv_cust_addr,
+                                "buyer_gstin": inv_cust_gstin,
+                                "buyer_pan": inv_cust_pan if 'inv_cust_pan' in dir() else "",
+                                "buyer_state": "Delhi",
+                                "buyer_state_code": "07",
+                                "place_of_supply": "Delhi",
+                                "buyer_contact": inv_cust_contact if 'inv_cust_contact' in dir() else "",
+                                "invoice_no": next_inv_number,
+                                "invoice_date": inv_date_short,
+                                "payment_terms": "",
+                                "other_ref": "",
+                                "despatched_through": "",
+                                "destination": "",
+                                "eway_bill_no": inv_eway_bill,
+                                "vehicle_no": inv_vehicle_no,
+                                "ship_to_name": ship_to_name,
+                                "ship_to_address": ship_to_addr,
+                                "ship_to_gstin": ship_to_gstin,
+                                "items": [{
+                                    "name": i["name"], "hsn": i["hsn"],
+                                    "qty": i["qty"], "rate": i["rate"],
+                                    "unit": "SQM", "per": "SQM",
+                                    "gst_pct": i["gst_pct"], "gst_type": i["gst_type"]
+                                } for i in st.session_state.invoice_items],
+                                "subtotal": round(subtotal, 2),
+                                "cgst": round(total_cgst, 2),
+                                "sgst": round(total_sgst, 2),
+                                "igst": round(total_igst, 2),
+                                "cgst_pct": _cgst_pct,
+                                "sgst_pct": _sgst_pct,
+                                "igst_pct": _igst_pct,
+                                "round_off": round(round_off, 2),
+                                "grand_total": grand_total,
+                            }
+                            pdf_bytes = _gen_pdf(pdf_data)
+
+                            st.download_button(
+                                label="📄 Download Invoice PDF",
+                                data=pdf_bytes,
+                                file_name=f"Invoice_{next_inv_number.replace('/', '-')}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                        except Exception as pdf_err:
+                            st.warning(f"⚠️ PDF generation failed: {pdf_err}")
+
+                        st.balloons()
+
+                        # ==========================================
+                        # SECTION 5: EDITABLE E-WAY BILL JSON
+                        # ==========================================
+                        st.divider()
+                        st.subheader("🚛 NIC E-Way Bill JSON")
+                        st.caption("Preview and edit the E-Way Bill payload below. Item quantities are intentionally omitted.")
+
+                        # Build NIC E-Way Bill JSON (no physical quantities)
+                        _eway_items = []
+                        for _idx, _itm in enumerate(st.session_state.invoice_items, 1):
+                            _taxable = _itm["qty"] * _itm["rate"]
+                            _gst_pct = _itm["gst_pct"]
+                            _is_local = "Local" in _itm["gst_type"]
+                            _eway_items.append({
+                                "itemNo": _idx,
+                                "productName": _itm["name"],
+                                "productDesc": _itm["name"],
+                                "hsnCode": int(_itm["hsn"]) if str(_itm["hsn"]).isdigit() else _itm["hsn"],
+                                "taxableAmount": round(_taxable, 2),
+                                "cgstRate": round(_gst_pct / 2, 2) if _is_local else 0,
+                                "sgstRate": round(_gst_pct / 2, 2) if _is_local else 0,
+                                "igstRate": round(_gst_pct, 2) if not _is_local else 0,
+                                "cessRate": 0,
+                                "cessAdvol": 0
+                            })
+
+                        _eway_payload = {
+                            "supplyType": "O",
+                            "subSupplyType": "1",
+                            "docType": "INV",
+                            "docNo": next_inv_number,
+                            "docDate": datetime.now(IST).strftime("%d/%m/%Y"),
+                            "fromGstin": "07AEFPG3543M1ZF",
+                            "fromTrdName": "MANGLAM TRADELINK",
+                            "fromAddr1": "6147/2, Gali Gurudwara, Nabi Karim",
+                            "fromAddr2": "Delhi 110055",
+                            "fromPlace": "Delhi",
+                            "fromPincode": 110055,
+                            "fromStateCode": 7,
+                            "toGstin": inv_cust_gstin or "URP",
+                            "toTrdName": inv_cust_name,
+                            "toAddr1": (ship_to_addr or inv_cust_addr).split('\n')[0] if (ship_to_addr or inv_cust_addr) else "",
+                            "toAddr2": "",
+                            "toPlace": "Delhi",
+                            "toPincode": 0,
+                            "toStateCode": 7,
+                            "totalValue": round(subtotal, 2),
+                            "cgstValue": round(total_cgst, 2),
+                            "sgstValue": round(total_sgst, 2),
+                            "igstValue": round(total_igst, 2),
+                            "cessValue": 0,
+                            "totInvValue": grand_total,
+                            "transMode": "1",
+                            "transDistance": "",
+                            "transporterName": "",
+                            "transporterId": "",
+                            "transDocNo": "",
+                            "transDocDate": "",
+                            "vehicleNo": inv_vehicle_no or "",
+                            "vehicleType": "R",
+                            "itemList": _eway_items
+                        }
+
+                        _eway_json_str = _json.dumps(_eway_payload, indent=2, ensure_ascii=False)
+
+                        edited_eway_json = st.text_area(
+                            "📝 Edit E-Way Bill JSON (quantities omitted)",
+                            value=_eway_json_str,
+                            height=300,
+                            key="eway_json_editor"
+                        )
+
+                        st.download_button(
+                            label="📥 Download E-Way Bill JSON",
+                            data=edited_eway_json.encode('utf-8'),
+                            file_name=f"EWayBill_{next_inv_number.replace('/', '-')}.json",
+                            mime="application/json",
+                            use_container_width=True
+                        )
+
+                    else:
+                        st.error("Invoices sheet not found. Please run the sync script first.")
+
+                except Exception as e:
+                    st.error(f"Failed to save invoice: {e}")
+
+    else:
+        st.error("🚫 Access Denied. This page is for Admins only.")
 
