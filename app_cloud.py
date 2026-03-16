@@ -20,6 +20,7 @@ IST = pytz.timezone('Asia/Kolkata')
 
 st.set_page_config(page_title="Manglam Tradelink Portal", layout="wide", page_icon="🏭")
 
+
 # --- CUSTOM STYLE (PREMIUM SAAS UI) ---
 st.markdown("""
     <style>
@@ -1233,14 +1234,13 @@ elif page == t["ord"]:
                 st.error(t["fill_all_details"])
             else:
                 now_ist = datetime.now(IST)
-                today_prefix = f"{now_ist.strftime('%d.%m.%y')}..#"
+                today_prefix = f"TALLY-{now_ist.strftime('%d.%m.%y')}."
                 next_x = 1
                 if not orders_df.empty and 'Order ID' in orders_df.columns:
                     today_orders = orders_df[orders_df['Order ID'].astype(str).str.startswith(today_prefix)]
                     if not today_orders.empty: next_x = len(today_orders) + 1
                 
-                import random
-                order_id = f"{today_prefix}{next_x}.{random.randint(10,99)}"
+                order_id = f"{today_prefix}{next_x}"
                 details_str = " | ".join([f"{k}: {v}" for k, v in order_details_dict.items()])
                 try:
                     orders_sheet.append_row([order_id, now_ist.strftime("%d-%m-%Y %I:%M %p"), customer_name, details_str, "Pending", "", order_notes])
