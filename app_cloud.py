@@ -2412,6 +2412,8 @@ elif page == "🧾 Generate Invoice":
 
         if 'invoice_items' not in st.session_state:
             st.session_state.invoice_items = []
+        if 'inv_form_counter' not in st.session_state:
+            st.session_state.inv_form_counter = 0
 
         # --- Item Selection (outside form for real-time filtering) ---
         manual_entry = st.toggle("✏️ Manual Entry (item not in stock list)", value=False, key="inv_manual_toggle")
@@ -2469,9 +2471,9 @@ elif page == "🧾 Generate Invoice":
                 st.warning("No items match. Try a different term or toggle Manual Entry.")
 
         # --- Form for qty, rate, GST (submits the item to cart) ---
-        # We use dynamic keys based on item_name to force Streamlit to update the widget defaults 
-        # when the selected item outside the form changes.
-        dyn_suffix = f"_{sel_idx}" if not manual_entry and manglam_stock_items and 'sel_idx' in locals() else "_manual"
+        # We use dynamic keys based on item_name and a form counter to force Streamlit to update/clear the widgets
+        fc = st.session_state.inv_form_counter
+        dyn_suffix = f"_{sel_idx}_{fc}" if not manual_entry and manglam_stock_items and 'sel_idx' in locals() else f"_manual_{fc}"
         
         with st.form("add_item_form", clear_on_submit=True):
             if manual_entry or not manglam_stock_items:
@@ -2518,6 +2520,9 @@ elif page == "🧾 Generate Invoice":
                     "gst_pct": gst_percent,
                     "unit": item_unit if 'item_unit' in dir() else "SQM"
                 })
+                # Bump counter to clear fields in the next render pass
+                st.session_state.inv_form_counter += 1
+                st.rerun()
 
         # Display Cart Table
         if st.session_state.invoice_items:
@@ -2684,7 +2689,8 @@ elif page == "🧾 Generate Invoice":
                                 "round_off": round(round_off, 2),
                                 "grand_total": grand_total,
                             }
-                            pdf_bytes = _gen_pdf(pdf_data)
+                            # Fix for fpdf string vs bytearray outputs
+                            pdf_bytes = bytes(_gen_pdf(pdf_data))
 
                             st.download_button(
                                 label="📄 Download Invoice PDF",
@@ -2696,87 +2702,7 @@ elif page == "🧾 Generate Invoice":
                         except Exception as pdf_err:
                             st.warning(f"⚠️ PDF generation failed: {pdf_err}")
 
-                        st.balloons()
 
-                        # ==========================================
-                        # SECTION 5: EDITABLE E-WAY BILL JSON
-                        # ==========================================
-                        st.divider()
-                        st.subheader("🚛 NIC E-Way Bill JSON")
-                        st.caption("Preview and edit the E-Way Bill payload below. Item quantities are intentionally omitted.")
-
-                        # Build NIC E-Way Bill JSON (no physical quantities)
-                        _eway_items = []
-                        for _idx, _itm in enumerate(st.session_state.invoice_items, 1):
-                            _taxable = _itm["qty"] * _itm["rate"]
-                            _gst_pct = _itm["gst_pct"]
-                            _is_local = "Local" in _itm["gst_type"]
-                            _eway_items.append({
-                                "itemNo": _idx,
-                                "productName": _itm["name"],
-                                "productDesc": _itm["name"],
-                                "hsnCode": int(_itm["hsn"]) if str(_itm["hsn"]).isdigit() else _itm["hsn"],
-                                "taxableAmount": round(_taxable, 2),
-                                "cgstRate": round(_gst_pct / 2, 2) if _is_local else 0,
-                                "sgstRate": round(_gst_pct / 2, 2) if _is_local else 0,
-                                "igstRate": round(_gst_pct, 2) if not _is_local else 0,
-                                "cessRate": 0,
-                                "cessAdvol": 0
-                            })
-
-                        _eway_payload = {
-                            "supplyType": "O",
-                            "subSupplyType": "1",
-                            "docType": "INV",
-                            "docNo": next_inv_number,
-                            "docDate": datetime.now(IST).strftime("%d/%m/%Y"),
-                            "fromGstin": "07AEFPG3543M1ZF",
-                            "fromTrdName": "MANGLAM TRADELINK",
-                            "fromAddr1": "6147/2, Gali Gurudwara, Nabi Karim",
-                            "fromAddr2": "Delhi 110055",
-                            "fromPlace": "Delhi",
-                            "fromPincode": 110055,
-                            "fromStateCode": 7,
-                            "toGstin": inv_cust_gstin or "URP",
-                            "toTrdName": inv_cust_name,
-                            "toAddr1": (ship_to_addr or inv_cust_addr).split('\n')[0] if (ship_to_addr or inv_cust_addr) else "",
-                            "toAddr2": "",
-                            "toPlace": "Delhi",
-                            "toPincode": 0,
-                            "toStateCode": 7,
-                            "totalValue": round(subtotal, 2),
-                            "cgstValue": round(total_cgst, 2),
-                            "sgstValue": round(total_sgst, 2),
-                            "igstValue": round(total_igst, 2),
-                            "cessValue": 0,
-                            "totInvValue": grand_total,
-                            "transMode": "1",
-                            "transDistance": "",
-                            "transporterName": "",
-                            "transporterId": "",
-                            "transDocNo": "",
-                            "transDocDate": "",
-                            "vehicleNo": inv_vehicle_no or "",
-                            "vehicleType": "R",
-                            "itemList": _eway_items
-                        }
-
-                        _eway_json_str = _json.dumps(_eway_payload, indent=2, ensure_ascii=False)
-
-                        edited_eway_json = st.text_area(
-                            "📝 Edit E-Way Bill JSON (quantities omitted)",
-                            value=_eway_json_str,
-                            height=300,
-                            key="eway_json_editor"
-                        )
-
-                        st.download_button(
-                            label="📥 Download E-Way Bill JSON",
-                            data=edited_eway_json.encode('utf-8'),
-                            file_name=f"EWayBill_{next_inv_number.replace('/', '-')}.json",
-                            mime="application/json",
-                            use_container_width=True
-                        )
 
                     else:
                         st.error("Invoices sheet not found. Please run the sync script first.")
