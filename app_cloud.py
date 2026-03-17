@@ -2461,7 +2461,8 @@ elif page == "🧾 Generate Invoice":
                 with ai4:
                     item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key="inv_rate")
             else:
-                st.markdown(f"**Selected:** `{item_name}`") if item_name else None
+                if item_name:
+                    st.markdown(f"**Selected:** `{item_name}`")
                 ai1, ai2 = st.columns(2)
                 with ai1:
                     hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key="inv_hsn")
@@ -2764,4 +2765,3 @@ elif page == "🧾 Generate Invoice":
     else:
         st.error("🚫 Access Denied. This page is for Admins only.")
 
-  
