@@ -2395,93 +2395,93 @@ elif page == "🧾 Generate Invoice":
         if 'invoice_items' not in st.session_state:
             st.session_state.invoice_items = []
 
+        # --- Item Selection (outside form for real-time filtering) ---
         manual_entry = st.toggle("✏️ Manual Entry (item not in stock list)", value=False, key="inv_manual_toggle")
 
-        with st.form("add_item_form", clear_on_submit=True):
-            st.write("**Add an Item**")
+        # Initialize defaults
+        default_hsn = ""
+        default_rate = 0.0
+        default_gst = 18
+        default_unit = "SQM"
+        item_name = ""
 
-            if not manual_entry and manglam_stock_items:
-                # --- Stock Picker Mode ---
-                item_search = st.text_input("🔍 Search Stock Item", key="inv_stock_search", placeholder="Type to filter...")
-                filtered_items = manglam_stock_items
-                if item_search:
-                    filtered_items = [s for s in manglam_stock_items if item_search.lower() in s.lower()]
+        if not manual_entry and manglam_stock_items:
+            # Type-to-filter: single text input that filters the dropdown
+            item_search = st.text_input("🔍 Type Item Name", key="inv_stock_search",
+                                        placeholder="Start typing to find items...")
 
-                if filtered_items:
-                    sel_idx = st.selectbox("Select Stock Item", range(len(filtered_items)),
-                                          format_func=lambda i: filtered_items[i], key="inv_stock_select")
-                    item_name = filtered_items[sel_idx]
-
-                    # Auto-fill from stock data
-                    stock_row = manglam_stock_df[manglam_stock_df["Item Name"] == item_name]
-                    if not stock_row.empty:
-                        _sr = stock_row.iloc[0]
-                        default_hsn = str(_sr.get("HSN Code", "")).strip()
-                        default_unit = str(_sr.get("Unit", "SQM")).strip()
-                        try:
-                            default_rate = float(str(_sr.get("Avg Rate", "0")).replace(",", ""))
-                        except:
-                            default_rate = 0.0
-                        try:
-                            default_gst = int(float(str(_sr.get("GST Rate %", "18")).replace(",", "")))
-                        except:
-                            default_gst = 18
-                        try:
-                            avail_qty = float(str(_sr.get("Closing Qty", "0")).replace(",", ""))
-                        except:
-                            avail_qty = 0.0
-                        st.caption(f"📦 Available: **{avail_qty:,.2f} {default_unit}** | HSN: {default_hsn} | GST: {default_gst}%")
-                    else:
-                        default_hsn = ""
-                        default_rate = 0.0
-                        default_gst = 18
-                        default_unit = "SQM"
-
-                    ai1, ai2 = st.columns(2)
-                    with ai1:
-                        hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key="inv_hsn")
-                    with ai2:
-                        item_unit = st.text_input("Unit", value=default_unit, key="inv_unit")
-                    ai3, ai4 = st.columns(2)
-                    with ai3:
-                        item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
-                    with ai4:
-                        item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", value=default_rate, key="inv_rate")
-
-                    g1, g2 = st.columns(2)
-                    with g1:
-                        gst_options = ["Local (CGST + SGST)", "Interstate (IGST)"]
-                        gst_default_idx = gst_options.index(auto_gst_type)
-                        gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key="inv_gst_type")
-                    with g2:
-                        gst_choices = [5, 12, 18, 28]
-                        gst_default_pct_idx = gst_choices.index(default_gst) if default_gst in gst_choices else 2
-                        gst_percent = st.selectbox("GST %", gst_choices, index=gst_default_pct_idx, key="inv_gst_pct")
-                else:
-                    st.warning("No stock items match your search. Try a different term or toggle Manual Entry.")
-                    item_name = ""
-                    hsn_code = ""
-                    item_qty = 0.0
-                    item_rate = 0.0
-                    gst_type = auto_gst_type
-                    gst_percent = 18
+            # Filter items as user types
+            if item_search:
+                filtered_items = [s for s in manglam_stock_items if item_search.lower() in s.lower()]
             else:
-                # --- Manual Entry Mode ---
+                filtered_items = manglam_stock_items
+
+            if filtered_items:
+                # Build display labels with stock info and avg price
+                def _stock_label(name):
+                    row = manglam_stock_df[manglam_stock_df["Item Name"] == name]
+                    if not row.empty:
+                        r = row.iloc[0]
+                        try: qty = float(str(r.get("Closing Qty", "0")).replace(",", ""))
+                        except: qty = 0.0
+                        try: rate = float(str(r.get("Avg Rate", "0")).replace(",", ""))
+                        except: rate = 0.0
+                        unit = str(r.get("Unit", "")).strip() or "units"
+                        return f"{name}  —  📦 {qty:,.0f} {unit} | ₹{rate:,.2f}"
+                    return name
+
+                sel_idx = st.selectbox(
+                    "Select Item", range(len(filtered_items)),
+                    format_func=lambda i: _stock_label(filtered_items[i]),
+                    key="inv_stock_select"
+                )
+                item_name = filtered_items[sel_idx]
+
+                # Auto-fill defaults from stock data
+                stock_row = manglam_stock_df[manglam_stock_df["Item Name"] == item_name]
+                if not stock_row.empty:
+                    _sr = stock_row.iloc[0]
+                    default_hsn = str(_sr.get("HSN Code", "")).strip()
+                    default_unit = str(_sr.get("Unit", "SQM")).strip() or "SQM"
+                    try: default_rate = float(str(_sr.get("Avg Rate", "0")).replace(",", ""))
+                    except: default_rate = 0.0
+                    try: default_gst = int(float(str(_sr.get("GST Rate %", "18")).replace(",", "")))
+                    except: default_gst = 18
+            else:
+                st.warning("No items match. Try a different term or toggle Manual Entry.")
+
+        # --- Form for qty, rate, GST (submits the item to cart) ---
+        with st.form("add_item_form", clear_on_submit=True):
+            if manual_entry or not manglam_stock_items:
+                item_name = st.text_input("Item Name", key="inv_item_name")
+                hsn_code = st.text_input("HSN / SAC Code", key="inv_hsn")
+                ai3, ai4 = st.columns(2)
+                with ai3:
+                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
+                with ai4:
+                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key="inv_rate")
+            else:
+                st.markdown(f"**Selected:** `{item_name}`") if item_name else None
                 ai1, ai2 = st.columns(2)
                 with ai1:
-                    item_name = st.text_input("Item Name", key="inv_item_name")
-                    hsn_code = st.text_input("HSN / SAC Code", key="inv_hsn")
+                    hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key="inv_hsn")
                 with ai2:
+                    item_unit = st.text_input("Unit", value=default_unit, key="inv_unit")
+                ai3, ai4 = st.columns(2)
+                with ai3:
                     item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
-                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key="inv_rate")
+                with ai4:
+                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", value=default_rate, key="inv_rate")
 
-                g1, g2 = st.columns(2)
-                with g1:
-                    gst_options = ["Local (CGST + SGST)", "Interstate (IGST)"]
-                    gst_default_idx = gst_options.index(auto_gst_type)
-                    gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key="inv_gst_type")
-                with g2:
-                    gst_percent = st.selectbox("GST %", [5, 12, 18, 28], index=2, key="inv_gst_pct")
+            g1, g2 = st.columns(2)
+            with g1:
+                gst_options = ["Local (CGST + SGST)", "Interstate (IGST)"]
+                gst_default_idx = gst_options.index(auto_gst_type)
+                gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key="inv_gst_type")
+            with g2:
+                gst_choices = [5, 12, 18, 28]
+                gst_default_pct_idx = gst_choices.index(default_gst) if default_gst in gst_choices else 2
+                gst_percent = st.selectbox("GST %", gst_choices, index=gst_default_pct_idx, key="inv_gst_pct")
 
             add_item_btn = st.form_submit_button("➕ Add Item to Cart", type="primary")
 
@@ -2764,3 +2764,4 @@ elif page == "🧾 Generate Invoice":
     else:
         st.error("🚫 Access Denied. This page is for Admins only.")
 
+  
