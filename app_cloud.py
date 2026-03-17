@@ -161,13 +161,14 @@ def get_gspread_client():
             safe_open("Rent Transactions"),
             safe_open("Archived Orders"),
             safe_open("Invoices"),
-            safe_open("Manglam Customers")
+            safe_open("Manglam Customers"),
+            safe_open("Manglam Stock")
         )
     except Exception as e:
         st.error(f"Failed to connect to Google Sheets: {e}")
-        return [None]*13
+        return [None]*14
 
-stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet, archive_sheet, invoices_sheet, manglam_cust_sheet = get_gspread_client()
+stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet, archive_sheet, invoices_sheet, manglam_cust_sheet, manglam_stock_sheet = get_gspread_client()
 
 
 
@@ -2355,24 +2356,132 @@ elif page == "🧾 Generate Invoice":
         # ==========================================
         st.subheader("🛒 Item Cart")
 
+        # --- Load Manglam Stock Data ---
+        manglam_stock_items = []
+        manglam_stock_df = pd.DataFrame()
+        if manglam_stock_sheet:
+            try:
+                ms_data = fetch_basic_records(manglam_stock_sheet, "Manglam Stock")
+                if ms_data:
+                    manglam_stock_df = pd.DataFrame(ms_data)
+                    manglam_stock_df.columns = manglam_stock_df.columns.astype(str).str.strip()
+                    # Normalize column names
+                    col_map = {}
+                    for col in manglam_stock_df.columns:
+                        cl = col.lower().replace(" ", "").replace("%", "")
+                        if "itemname" in cl or cl == "name": col_map[col] = "Item Name"
+                        elif "hsncode" in cl or cl == "hsn": col_map[col] = "HSN Code"
+                        elif "gstrate" in cl or "taxrate" in cl: col_map[col] = "GST Rate %"
+                        elif "avgrate" in cl or "averagerate" in cl: col_map[col] = "Avg Rate"
+                        elif "closingqty" in cl or "qty" in cl: col_map[col] = "Closing Qty"
+                        elif "unit" in cl: col_map[col] = "Unit"
+                    manglam_stock_df = manglam_stock_df.rename(columns=col_map)
+                    if "Item Name" in manglam_stock_df.columns:
+                        manglam_stock_items = sorted(manglam_stock_df["Item Name"].dropna().astype(str).str.strip().unique().tolist())
+                        manglam_stock_items = [s for s in manglam_stock_items if s]
+            except Exception as stock_err:
+                st.warning(f"⚠️ Could not load stock data: {stock_err}")
+
+        # --- Auto-detect GST Type from Customer GSTIN ---
+        auto_gst_type = "Local (CGST + SGST)"  # Default: Delhi
+        try:
+            if inv_cust_gstin and len(inv_cust_gstin) >= 2:
+                state_code = inv_cust_gstin[:2]
+                if state_code != "07":
+                    auto_gst_type = "Interstate (IGST)"
+        except:
+            pass
+
         if 'invoice_items' not in st.session_state:
             st.session_state.invoice_items = []
 
+        manual_entry = st.toggle("✏️ Manual Entry (item not in stock list)", value=False, key="inv_manual_toggle")
+
         with st.form("add_item_form", clear_on_submit=True):
             st.write("**Add an Item**")
-            ai1, ai2 = st.columns(2)
-            with ai1:
-                item_name = st.text_input("Item Name", key="inv_item_name")
-                hsn_code = st.text_input("HSN / SAC Code", key="inv_hsn")
-            with ai2:
-                item_qty = st.number_input("Quantity (SQM / Units)", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
-                item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key="inv_rate")
 
-            g1, g2 = st.columns(2)
-            with g1:
-                gst_type = st.selectbox("GST Type", ["Local (CGST + SGST)", "Interstate (IGST)"], key="inv_gst_type")
-            with g2:
-                gst_percent = st.selectbox("GST %", [5, 12, 18], index=2, key="inv_gst_pct")
+            if not manual_entry and manglam_stock_items:
+                # --- Stock Picker Mode ---
+                item_search = st.text_input("🔍 Search Stock Item", key="inv_stock_search", placeholder="Type to filter...")
+                filtered_items = manglam_stock_items
+                if item_search:
+                    filtered_items = [s for s in manglam_stock_items if item_search.lower() in s.lower()]
+
+                if filtered_items:
+                    sel_idx = st.selectbox("Select Stock Item", range(len(filtered_items)),
+                                          format_func=lambda i: filtered_items[i], key="inv_stock_select")
+                    item_name = filtered_items[sel_idx]
+
+                    # Auto-fill from stock data
+                    stock_row = manglam_stock_df[manglam_stock_df["Item Name"] == item_name]
+                    if not stock_row.empty:
+                        _sr = stock_row.iloc[0]
+                        default_hsn = str(_sr.get("HSN Code", "")).strip()
+                        default_unit = str(_sr.get("Unit", "SQM")).strip()
+                        try:
+                            default_rate = float(str(_sr.get("Avg Rate", "0")).replace(",", ""))
+                        except:
+                            default_rate = 0.0
+                        try:
+                            default_gst = int(float(str(_sr.get("GST Rate %", "18")).replace(",", "")))
+                        except:
+                            default_gst = 18
+                        try:
+                            avail_qty = float(str(_sr.get("Closing Qty", "0")).replace(",", ""))
+                        except:
+                            avail_qty = 0.0
+                        st.caption(f"📦 Available: **{avail_qty:,.2f} {default_unit}** | HSN: {default_hsn} | GST: {default_gst}%")
+                    else:
+                        default_hsn = ""
+                        default_rate = 0.0
+                        default_gst = 18
+                        default_unit = "SQM"
+
+                    ai1, ai2 = st.columns(2)
+                    with ai1:
+                        hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key="inv_hsn")
+                    with ai2:
+                        item_unit = st.text_input("Unit", value=default_unit, key="inv_unit")
+                    ai3, ai4 = st.columns(2)
+                    with ai3:
+                        item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
+                    with ai4:
+                        item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", value=default_rate, key="inv_rate")
+
+                    g1, g2 = st.columns(2)
+                    with g1:
+                        gst_options = ["Local (CGST + SGST)", "Interstate (IGST)"]
+                        gst_default_idx = gst_options.index(auto_gst_type)
+                        gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key="inv_gst_type")
+                    with g2:
+                        gst_choices = [5, 12, 18, 28]
+                        gst_default_pct_idx = gst_choices.index(default_gst) if default_gst in gst_choices else 2
+                        gst_percent = st.selectbox("GST %", gst_choices, index=gst_default_pct_idx, key="inv_gst_pct")
+                else:
+                    st.warning("No stock items match your search. Try a different term or toggle Manual Entry.")
+                    item_name = ""
+                    hsn_code = ""
+                    item_qty = 0.0
+                    item_rate = 0.0
+                    gst_type = auto_gst_type
+                    gst_percent = 18
+            else:
+                # --- Manual Entry Mode ---
+                ai1, ai2 = st.columns(2)
+                with ai1:
+                    item_name = st.text_input("Item Name", key="inv_item_name")
+                    hsn_code = st.text_input("HSN / SAC Code", key="inv_hsn")
+                with ai2:
+                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
+                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key="inv_rate")
+
+                g1, g2 = st.columns(2)
+                with g1:
+                    gst_options = ["Local (CGST + SGST)", "Interstate (IGST)"]
+                    gst_default_idx = gst_options.index(auto_gst_type)
+                    gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key="inv_gst_type")
+                with g2:
+                    gst_percent = st.selectbox("GST %", [5, 12, 18, 28], index=2, key="inv_gst_pct")
 
             add_item_btn = st.form_submit_button("➕ Add Item to Cart", type="primary")
 
@@ -2383,7 +2492,8 @@ elif page == "🧾 Generate Invoice":
                     "qty": item_qty,
                     "rate": item_rate,
                     "gst_type": gst_type,
-                    "gst_pct": gst_percent
+                    "gst_pct": gst_percent,
+                    "unit": item_unit if 'item_unit' in dir() else "SQM"
                 })
 
         # Display Cart Table
@@ -2495,8 +2605,8 @@ elif page == "🧾 Generate Invoice":
                             current_num = int(num_match.group(2))
                             num_width = len(num_match.group(2))
                             new_next = f"{prefix}{str(current_num + 1).zfill(num_width)}"
-                            invoices_sheet.update('N2', [[new_next]])
-                            invoices_sheet.update('O2', [[inv_date]])
+                            invoices_sheet.update(values=[[new_next]], range_name='N2')
+                            invoices_sheet.update(values=[[inv_date]], range_name='O2')
 
                         st.success(f"✅ Invoice **{next_inv_number}** saved successfully!")
 
@@ -2538,7 +2648,7 @@ elif page == "🧾 Generate Invoice":
                                 "items": [{
                                     "name": i["name"], "hsn": i["hsn"],
                                     "qty": i["qty"], "rate": i["rate"],
-                                    "unit": "SQM", "per": "SQM",
+                                    "unit": i.get("unit", "SQM"), "per": i.get("unit", "SQM"),
                                     "gst_pct": i["gst_pct"], "gst_type": i["gst_type"]
                                 } for i in st.session_state.invoice_items],
                                 "subtotal": round(subtotal, 2),
