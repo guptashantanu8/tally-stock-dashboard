@@ -2376,19 +2376,37 @@ elif page == "🧾 Generate Invoice":
                         elif "closingqty" in cl or "qty" in cl: col_map[col] = "Closing Qty"
                         elif "unit" in cl: col_map[col] = "Unit"
                     manglam_stock_df = manglam_stock_df.rename(columns=col_map)
+                    
                     if "Item Name" in manglam_stock_df.columns:
-                        manglam_stock_items = sorted(manglam_stock_df["Item Name"].dropna().astype(str).str.strip().unique().tolist())
-                        manglam_stock_items = [s for s in manglam_stock_items if s]
+                        # Convert qty to float for sorting & filtering
+                        def _parse_qty(q):
+                            try: return float(str(q).replace(',', ''))
+                            except: return 0.0
+                        
+                        manglam_stock_df["_sort_qty"] = manglam_stock_df.get("Closing Qty", 0).apply(_parse_qty)
+                        
+                        # Filter out exactly zero stock
+                        valid_stock = manglam_stock_df[manglam_stock_df["_sort_qty"] != 0.0].copy()
+                        
+                        # Sort: positive ascending (or descending, user didn't specify, let's do descending for largest first), then negative
+                        pos_stock = valid_stock[valid_stock["_sort_qty"] > 0].sort_values(by="_sort_qty", ascending=False)
+                        neg_stock = valid_stock[valid_stock["_sort_qty"] < 0].sort_values(by="_sort_qty", ascending=True)
+                        
+                        manglam_stock_items = pos_stock["Item Name"].tolist() + neg_stock["Item Name"].tolist()
+                        manglam_stock_items = [str(s).strip() for s in manglam_stock_items if str(s).strip()]
             except Exception as stock_err:
                 st.warning(f"⚠️ Could not load stock data: {stock_err}")
 
         # --- Auto-detect GST Type from Customer GSTIN ---
         auto_gst_type = "Local (CGST + SGST)"  # Default: Delhi
         try:
-            if inv_cust_gstin and len(inv_cust_gstin) >= 2:
-                state_code = inv_cust_gstin[:2]
-                if state_code != "07":
-                    auto_gst_type = "Interstate (IGST)"
+            if inv_cust_gstin and isinstance(inv_cust_gstin, str):
+                g_str = inv_cust_gstin.strip()
+                if len(g_str) >= 2:
+                    state_code = g_str[:2]
+                    # '07' is Delhi, '09' UP, '06' Haryana, etc. 
+                    if state_code != "07":
+                        auto_gst_type = "Interstate (IGST)"
         except:
             pass
 
@@ -2451,38 +2469,42 @@ elif page == "🧾 Generate Invoice":
                 st.warning("No items match. Try a different term or toggle Manual Entry.")
 
         # --- Form for qty, rate, GST (submits the item to cart) ---
+        # We use dynamic keys based on item_name to force Streamlit to update the widget defaults 
+        # when the selected item outside the form changes.
+        dyn_suffix = f"_{sel_idx}" if not manual_entry and manglam_stock_items and 'sel_idx' in locals() else "_manual"
+        
         with st.form("add_item_form", clear_on_submit=True):
             if manual_entry or not manglam_stock_items:
-                item_name = st.text_input("Item Name", key="inv_item_name")
-                hsn_code = st.text_input("HSN / SAC Code", key="inv_hsn")
+                item_name = st.text_input("Item Name", key=f"inv_item_name{dyn_suffix}")
+                hsn_code = st.text_input("HSN / SAC Code", key=f"inv_hsn{dyn_suffix}")
                 ai3, ai4 = st.columns(2)
                 with ai3:
-                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
+                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key=f"inv_qty{dyn_suffix}")
                 with ai4:
-                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key="inv_rate")
+                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key=f"inv_rate{dyn_suffix}")
             else:
                 if item_name:
                     st.markdown(f"**Selected:** `{item_name}`")
                 ai1, ai2 = st.columns(2)
                 with ai1:
-                    hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key="inv_hsn")
+                    hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key=f"inv_hsn{dyn_suffix}")
                 with ai2:
-                    item_unit = st.text_input("Unit", value=default_unit, key="inv_unit")
+                    item_unit = st.text_input("Unit", value=default_unit, key=f"inv_unit{dyn_suffix}")
                 ai3, ai4 = st.columns(2)
                 with ai3:
-                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key="inv_qty")
+                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key=f"inv_qty{dyn_suffix}")
                 with ai4:
-                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", value=default_rate, key="inv_rate")
+                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", value=default_rate, key=f"inv_rate{dyn_suffix}")
 
             g1, g2 = st.columns(2)
             with g1:
                 gst_options = ["Local (CGST + SGST)", "Interstate (IGST)"]
                 gst_default_idx = gst_options.index(auto_gst_type)
-                gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key="inv_gst_type")
+                gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key=f"inv_gst_type{dyn_suffix}")
             with g2:
                 gst_choices = [5, 12, 18, 28]
                 gst_default_pct_idx = gst_choices.index(default_gst) if default_gst in gst_choices else 2
-                gst_percent = st.selectbox("GST %", gst_choices, index=gst_default_pct_idx, key="inv_gst_pct")
+                gst_percent = st.selectbox("GST %", gst_choices, index=gst_default_pct_idx, key=f"inv_gst_pct{dyn_suffix}")
 
             add_item_btn = st.form_submit_button("➕ Add Item to Cart", type="primary")
 
