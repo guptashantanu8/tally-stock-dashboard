@@ -1407,8 +1407,22 @@ elif page == t["ord"]:
                                         tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                                         tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
                                         if tg_token and tg_chat_id:
-                                            comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Completed By: {completed_by_name}\n👑 Assigned By: {st.session_state.user_name}"
-                                            comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 पूरा किया: {completed_by_name}\n👑 द्वारा: {st.session_state.user_name}"
+                                            import re
+                                            total_units = 0.0
+                                            try:
+                                                det = str(row.get('Order Details', ''))
+                                                for m in re.finditer(r'[-—:]\s*([\d,.]+)\s*([a-zA-Z]+)', det):
+                                                    total_units += float(m.group(1).replace(',', ''))
+                                                if total_units == 0:
+                                                    for m in re.finditer(r'\b([\d,.]+)\s*(SQM|Pcs|Nos|Kgs|Ltrs|Mtrs|Units)\b', det, re.IGNORECASE):
+                                                        total_units += float(m.group(1).replace(',', ''))
+                                            except: pass
+                                            
+                                            tu_str = f"📦 Total Units: {total_units:g}\n" if total_units > 0 else ""
+                                            htu_str = f"📦 कुल यूनिट: {total_units:g}\n" if total_units > 0 else ""
+                                            
+                                            comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n{tu_str}👷 Completed By: {completed_by_name}\n👑 Assigned By: {st.session_state.user_name}"
+                                            comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n{htu_str}👷 पूरा किया: {completed_by_name}\n👑 द्वारा: {st.session_state.user_name}"
                                             encoded_comp = urllib.parse.quote(comp_text)
                                             requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
                                     except: pass
@@ -1430,8 +1444,22 @@ elif page == t["ord"]:
                                     tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN")
                                     tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
                                     if tg_token and tg_chat_id:
-                                        comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n👷 Completed By: {st.session_state.user_name}"
-                                        comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n👷 पूरा किया: {st.session_state.user_name}"
+                                        import re
+                                        total_units = 0.0
+                                        try:
+                                            det = str(row.get('Order Details', ''))
+                                            for m in re.finditer(r'[-—:]\s*([\d,.]+)\s*([a-zA-Z]+)', det):
+                                                total_units += float(m.group(1).replace(',', ''))
+                                            if total_units == 0:
+                                                for m in re.finditer(r'\b([\d,.]+)\s*(SQM|Pcs|Nos|Kgs|Ltrs|Mtrs|Units)\b', det, re.IGNORECASE):
+                                                    total_units += float(m.group(1).replace(',', ''))
+                                        except: pass
+                                        
+                                        tu_str = f"📦 Total Units: {total_units:g}\n" if total_units > 0 else ""
+                                        htu_str = f"📦 कुल यूनिट: {total_units:g}\n" if total_units > 0 else ""
+
+                                        comp_text = f"✅ *ORDER COMPLETED* ✅\n\n🆔 {row['Order ID']}\n👤 {row['Customer Name']}\n{tu_str}👷 Completed By: {st.session_state.user_name}"
+                                        comp_text += f"\n\n── हिंदी ──\n✅ *ऑर्डर पूरा* ✅\n\n🆔 {row['Order ID']}\n👤 {hindi(str(row['Customer Name']))}\n{htu_str}👷 पूरा किया: {st.session_state.user_name}"
                                         encoded_comp = urllib.parse.quote(comp_text)
                                         requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_comp}")
                                 except: pass
@@ -2528,54 +2556,79 @@ elif page == "🧾 Generate Invoice":
         fc = st.session_state.inv_form_counter
         dyn_suffix = f"_{sel_idx}_{fc}" if not manual_entry and manglam_stock_items and 'sel_idx' in locals() else f"_manual_{fc}"
         
-        with st.form("add_item_form", clear_on_submit=True):
-            if manual_entry or not manglam_stock_items:
-                item_name = st.text_input("Item Name", key=f"inv_item_name{dyn_suffix}")
-                hsn_code = st.text_input("HSN / SAC Code", key=f"inv_hsn{dyn_suffix}")
-                ai3, ai4 = st.columns(2)
-                with ai3:
-                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key=f"inv_qty{dyn_suffix}")
-                with ai4:
-                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key=f"inv_rate{dyn_suffix}")
+        qty_key = f"inv_qty{dyn_suffix}"
+        rate_key = f"inv_rate{dyn_suffix}"
+        tot_key = f"inv_tot{dyn_suffix}"
+        
+        # Initialize default values in session state if this is a fresh dynamic key
+        if qty_key not in st.session_state: st.session_state[qty_key] = 0.0
+        if rate_key not in st.session_state: st.session_state[rate_key] = default_rate if 'default_rate' in locals() else 0.0
+        if tot_key not in st.session_state: st.session_state[tot_key] = 0.0
+        
+        def calc_total():
+            st.session_state[tot_key] = st.session_state[qty_key] * st.session_state[rate_key]
+            
+        def calc_rate():
+            if st.session_state[qty_key] > 0:
+                st.session_state[rate_key] = st.session_state[tot_key] / st.session_state[qty_key]
             else:
-                if item_name:
-                    st.markdown(f"**Selected:** `{item_name}`")
-                ai1, ai2 = st.columns(2)
-                with ai1:
-                    hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key=f"inv_hsn{dyn_suffix}")
-                with ai2:
-                    item_unit = st.text_input("Unit", value=default_unit, key=f"inv_unit{dyn_suffix}")
-                ai3, ai4 = st.columns(2)
-                with ai3:
-                    item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key=f"inv_qty{dyn_suffix}")
-                with ai4:
-                    item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", value=default_rate, key=f"inv_rate{dyn_suffix}")
+                st.session_state[rate_key] = 0.0
+        
+        st.markdown("<div style='padding:15px; border:1px solid var(--secondary-background-color); border-radius:10px; margin-bottom: 20px; background: var(--secondary-background-color);'>", unsafe_allow_html=True)
+        st.markdown("##### ➕ Add Item Details")
+        
+        if manual_entry or not manglam_stock_items:
+            item_name = st.text_input("Item Name", key=f"inv_item_name{dyn_suffix}")
+            hsn_code = st.text_input("HSN / SAC Code", key=f"inv_hsn{dyn_suffix}")
+            ai3, ai4, ai5 = st.columns(3)
+            with ai3:
+                item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key=qty_key, on_change=calc_total)
+            with ai4:
+                item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key=rate_key, on_change=calc_total)
+            with ai5:
+                item_total = st.number_input("Total Value (₹) [Auto-Updates Rate]", min_value=0.0, step=1.0, format="%.2f", key=tot_key, on_change=calc_rate)
+        else:
+            if item_name:
+                st.markdown(f"**Selected:** `{item_name}`")
+            ai1, ai2 = st.columns(2)
+            with ai1:
+                hsn_code = st.text_input("HSN / SAC Code", value=default_hsn, key=f"inv_hsn{dyn_suffix}")
+            with ai2:
+                item_unit = st.text_input("Unit", value=default_unit, key=f"inv_unit{dyn_suffix}")
+            ai3, ai4, ai5 = st.columns(3)
+            with ai3:
+                item_qty = st.number_input("Quantity", min_value=0.0, step=1.0, format="%.2f", key=qty_key, on_change=calc_total)
+            with ai4:
+                item_rate = st.number_input("Rate per Unit (₹)", min_value=0.0, step=0.5, format="%.2f", key=rate_key, on_change=calc_total)
+            with ai5:
+                item_total = st.number_input("Total Value (₹) [Auto-Updates Rate]", min_value=0.0, step=1.0, format="%.2f", key=tot_key, on_change=calc_rate)
 
-            g1, g2 = st.columns(2)
-            with g1:
-                gst_options = ["Intra State (CGST + SGST)", "Inter State (IGST)"]
-                gst_default_idx = gst_options.index(auto_gst_type) if auto_gst_type in gst_options else 0
-                gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key=f"inv_gst_type{dyn_suffix}")
-            with g2:
-                gst_choices = [5, 12, 18, 28]
-                gst_default_pct_idx = gst_choices.index(default_gst) if default_gst in gst_choices else 2
-                gst_percent = st.selectbox("GST %", gst_choices, index=gst_default_pct_idx, key=f"inv_gst_pct{dyn_suffix}")
+        g1, g2 = st.columns(2)
+        with g1:
+            gst_options = ["Intra State (CGST + SGST)", "Inter State (IGST)"]
+            gst_default_idx = gst_options.index(auto_gst_type) if auto_gst_type in gst_options else 0
+            gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key=f"inv_gst_type{dyn_suffix}")
+        with g2:
+            gst_choices = [5, 12, 18, 28]
+            gst_default_pct_idx = gst_choices.index(default_gst) if default_gst in gst_choices else 2
+            gst_percent = st.selectbox("GST %", gst_choices, index=gst_default_pct_idx, key=f"inv_gst_pct{dyn_suffix}")
 
-            add_item_btn = st.form_submit_button("➕ Add Item to Cart", type="primary")
+        add_item_btn = st.button("➕ Add Item to Cart", type="primary")
 
-            if add_item_btn and item_name and item_qty > 0 and item_rate > 0:
-                st.session_state.invoice_items.append({
-                    "name": item_name,
-                    "hsn": hsn_code,
-                    "qty": item_qty,
-                    "rate": item_rate,
-                    "gst_type": gst_type,
-                    "gst_pct": gst_percent,
-                    "unit": item_unit if 'item_unit' in dir() else "SQM"
-                })
-                # Bump counter to clear fields in the next render pass
-                st.session_state.inv_form_counter += 1
-                st.rerun()
+        if add_item_btn and item_name and item_qty > 0 and item_rate > 0:
+            st.session_state.invoice_items.append({
+                "name": item_name,
+                "hsn": hsn_code,
+                "qty": item_qty,
+                "rate": item_rate,
+                "gst_type": gst_type,
+                "gst_pct": gst_percent,
+                "unit": item_unit if 'item_unit' in locals() else "SQM"
+            })
+            st.session_state.inv_form_counter += 1
+            st.rerun()
+            
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # Display Cart Table
         if st.session_state.invoice_items:
