@@ -150,8 +150,6 @@ def get_gspread_client():
             db.sheet1, # 🟢 THIS FIXES THE DASHBOARD: It automatically grabs your first tab!
             safe_open("Orders"),
             safe_open("Users"),
-            safe_open("Restock Times"),
-            safe_open("15-Day Sales"),
             safe_open("Customers"),
             safe_open("Audit Logs"),
             safe_open("Master Items"),
@@ -160,13 +158,14 @@ def get_gspread_client():
             safe_open("Archived Orders"),
             safe_open("Invoices"),
             safe_open("Manglam Customers"),
-            safe_open("Manglam Stock")
+            safe_open("Manglam Stock"),
+            safe_open("Manglam Transporters")
         )
     except Exception as e:
         st.error(f"Failed to connect to Google Sheets: {e}")
-        return [None]*14
+        return [None]*13
 
-stock_sheet, orders_sheet, users_sheet, restock_sheet, sales_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet, archive_sheet, invoices_sheet, manglam_cust_sheet, manglam_stock_sheet = get_gspread_client()
+stock_sheet, orders_sheet, users_sheet, cust_sheet, audit_sheet, master_sheet, tenants_sheet, rent_tx_sheet, archive_sheet, invoices_sheet, manglam_cust_sheet, manglam_stock_sheet, manglam_trans_sheet = get_gspread_client()
 
 
 
@@ -2342,7 +2341,35 @@ elif page == "🧾 Generate Invoice":
         # SECTION 1.5: DISPATCH DETAILS (Optional)
         # ==========================================
         st.subheader("🚚 Dispatch Details (Optional)")
-        disp1, disp2 = st.columns(2)
+        
+        # --- Load Transporters ---
+        transporter_names = []
+        trans_df = pd.DataFrame()
+        if manglam_trans_sheet:
+            try:
+                mt_data = fetch_basic_records(manglam_trans_sheet, "Manglam Transporters")
+                if mt_data:
+                    trans_df = pd.DataFrame(mt_data)
+                    trans_df.columns = trans_df.columns.astype(str).str.strip()
+                    if "Transporter Name" in trans_df.columns:
+                        transporter_names = trans_df["Transporter Name"].dropna().astype(str).str.strip().unique().tolist()
+                        transporter_names = [t for t in transporter_names if t]
+            except Exception as e:
+                st.warning(f"⚠️ Could not load transporters: {e}")
+
+        disp_select, disp1, disp2 = st.columns(3)
+        with disp_select:
+            inv_transporter = st.selectbox("Select Transporter (Optional)", [""] + transporter_names, key="inv_transporter")
+            inv_transporter_id = ""
+            if inv_transporter and not trans_df.empty:
+                match = trans_df[trans_df["Transporter Name"] == inv_transporter]
+                if not match.empty:
+                    for col in match.columns:
+                        if 'id' in col.lower() or 'gstin' in col.lower():
+                            inv_transporter_id = str(match.iloc[0][col]).strip()
+                            break
+            if inv_transporter:
+                st.caption(f"📌 Transporter ID: `{inv_transporter_id}`")
         with disp1:
             inv_eway_bill = st.text_input("e-Way Bill Number", key="inv_eway", placeholder="e.g. 1234 5678 9012")
         with disp2:
@@ -2641,8 +2668,8 @@ elif page == "🧾 Generate Invoice":
                 "totInvValue": grand_total,
                 "transMode": "1",
                 "transDistance": "",
-                "transporterName": "",
-                "transporterId": "",
+                "transporterName": inv_transporter if 'inv_transporter' in locals() else "",
+                "transporterId": inv_transporter_id if 'inv_transporter_id' in locals() else "",
                 "transDocNo": "",
                 "transDocDate": "",
                 "vehicleNo": inv_vehicle_no or "",
