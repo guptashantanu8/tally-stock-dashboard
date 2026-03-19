@@ -19,8 +19,6 @@ SHEET_NAME = "Tally Live Stock"
 IST = pytz.timezone('Asia/Kolkata')
 
 st.set_page_config(page_title="Manglam Tradelink Portal", layout="wide", page_icon="🏭")
-
-
 # --- CUSTOM STYLE (PREMIUM SAAS UI) ---
 st.markdown("""
     <style>
@@ -994,6 +992,7 @@ if st.session_state.role == "Admin":
     pages.append(t["rep"])
     pages.append(t["admin"])
     pages.append("🧾 Generate Invoice")
+    pages.append("📁 Saved Invoices")
 
 # Sleek Top Header Box
 st.markdown(f"""
@@ -2398,7 +2397,7 @@ elif page == "🧾 Generate Invoice":
                 st.warning(f"⚠️ Could not load stock data: {stock_err}")
 
         # --- Auto-detect GST Type from Customer GSTIN ---
-        auto_gst_type = "Local (CGST + SGST)"  # Default: Delhi
+        auto_gst_type = "Intra State (CGST + SGST)"  # Default: Delhi
         try:
             if inv_cust_gstin and isinstance(inv_cust_gstin, str):
                 g_str = inv_cust_gstin.strip()
@@ -2406,7 +2405,7 @@ elif page == "🧾 Generate Invoice":
                     state_code = g_str[:2]
                     # '07' is Delhi, '09' UP, '06' Haryana, etc. 
                     if state_code != "07":
-                        auto_gst_type = "Interstate (IGST)"
+                        auto_gst_type = "Inter State (IGST)"
         except:
             pass
 
@@ -2467,6 +2466,12 @@ elif page == "🧾 Generate Invoice":
                     except: default_rate = 0.0
                     try: default_gst = int(float(str(_sr.get("GST Rate %", "18")).replace(",", "")))
                     except: default_gst = 18
+                    
+                    # Apply specific GST overrides based on HSN criteria
+                    if default_hsn.startswith("5903") or default_hsn.startswith("5407"):
+                        default_gst = 5
+                    elif default_hsn.startswith("3920") or default_hsn.startswith("4202"):
+                        default_gst = 18
             else:
                 st.warning("No items match. Try a different term or toggle Manual Entry.")
 
@@ -2500,8 +2505,8 @@ elif page == "🧾 Generate Invoice":
 
             g1, g2 = st.columns(2)
             with g1:
-                gst_options = ["Local (CGST + SGST)", "Interstate (IGST)"]
-                gst_default_idx = gst_options.index(auto_gst_type)
+                gst_options = ["Intra State (CGST + SGST)", "Inter State (IGST)"]
+                gst_default_idx = gst_options.index(auto_gst_type) if auto_gst_type in gst_options else 0
                 gst_type = st.selectbox("GST Type (auto-detected)", gst_options, index=gst_default_idx, key=f"inv_gst_type{dyn_suffix}")
             with g2:
                 gst_choices = [5, 12, 18, 28]
@@ -2563,7 +2568,7 @@ elif page == "🧾 Generate Invoice":
             taxable = itm['qty'] * itm['rate']
             subtotal += taxable
             gst_amt = taxable * itm['gst_pct'] / 100
-            if 'Local' in itm['gst_type']:
+            if 'Intra State' in itm['gst_type']:
                 total_cgst += gst_amt / 2
                 total_sgst += gst_amt / 2
             else:
@@ -2582,6 +2587,86 @@ elif page == "🧾 Generate Invoice":
         s4.metric("IGST", f"₹{total_igst:,.2f}")
         s5.metric("Round Off", f"₹{round_off:,.2f}")
         s6.metric("🎯 Grand Total", f"₹{grand_total:,.2f}")
+
+        # ==========================================
+        # NIC E-WAY BILL PRE-FLIGHT (Before Saving)
+        # ==========================================
+        st.divider()
+        with st.expander("🚛 Generate E-Way Bill JSON (Pre-Flight)", expanded=False):
+            st.caption("You can download the JSON payload to upload to the NIC E-Way Bill portal before finalizing the invoice. Item quantities are intentionally omitted.")
+
+            _eway_items = []
+            for _idx, _itm in enumerate(st.session_state.invoice_items, 1):
+                _taxable = _itm["qty"] * _itm["rate"]
+                _gst_pct = _itm["gst_pct"]
+                _is_local = "Intra State" in _itm["gst_type"]
+                _eway_items.append({
+                    "itemNo": _idx,
+                    "productName": _itm["name"],
+                    "productDesc": _itm["name"],
+                    "hsnCode": int(_itm["hsn"]) if str(_itm["hsn"]).isdigit() else _itm["hsn"],
+                    "taxableAmount": round(_taxable, 2),
+                    "cgstRate": round(_gst_pct / 2, 2) if _is_local else 0,
+                    "sgstRate": round(_gst_pct / 2, 2) if _is_local else 0,
+                    "igstRate": round(_gst_pct, 2) if not _is_local else 0,
+                    "cessRate": 0,
+                    "cessAdvol": 0
+                })
+
+            _eway_payload = {
+                "supplyType": "O",
+                "subSupplyType": "1",
+                "docType": "INV",
+                "docNo": "DRAFT",
+                "docDate": datetime.now(IST).strftime("%d/%m/%Y"),
+                "fromGstin": "07AEFPG3543M1ZF",
+                "fromTrdName": "MANGLAM TRADELINK",
+                "fromAddr1": "6147/2, Gali Gurudwara, Nabi Karim",
+                "fromAddr2": "Delhi 110055",
+                "fromPlace": "Delhi",
+                "fromPincode": 110055,
+                "fromStateCode": 7,
+                "toGstin": inv_cust_gstin or "URP",
+                "toTrdName": inv_cust_name,
+                "toAddr1": (ship_to_addr or inv_cust_addr).split('\n')[0] if (ship_to_addr or inv_cust_addr) else "",
+                "toAddr2": "",
+                "toPlace": "Delhi",
+                "toPincode": 0,
+                "toStateCode": 7,
+                "totalValue": round(subtotal, 2),
+                "cgstValue": round(total_cgst, 2),
+                "sgstValue": round(total_sgst, 2),
+                "igstValue": round(total_igst, 2),
+                "cessValue": 0,
+                "totInvValue": grand_total,
+                "transMode": "1",
+                "transDistance": "",
+                "transporterName": "",
+                "transporterId": "",
+                "transDocNo": "",
+                "transDocDate": "",
+                "vehicleNo": inv_vehicle_no or "",
+                "vehicleType": "R",
+                "itemList": _eway_items
+            }
+            
+            import json as _json_pre
+            _eway_json_str = _json_pre.dumps(_eway_payload, indent=2, ensure_ascii=False)
+            
+            edited_eway_json = st.text_area(
+                "📝 Edit payload if needed:",
+                value=_eway_json_str,
+                height=250,
+                key="eway_json_editor_preflight"
+            )
+            
+            st.download_button(
+                label="⬇️ Download E-Way Bill JSON",
+                data=edited_eway_json.encode('utf-8'),
+                file_name=f"EwayBill_DRAFT_{datetime.now(IST).strftime('%Y%m%d%H%M')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
 
         st.divider()
 
@@ -2647,7 +2732,7 @@ elif page == "🧾 Generate Invoice":
                             _sgst_pct = ""
                             _igst_pct = ""
                             for _itm in st.session_state.invoice_items:
-                                if "Local" in _itm["gst_type"]:
+                                if "Intra State" in _itm["gst_type"]:
                                     _cgst_pct = str(_itm["gst_pct"] // 2)
                                     _sgst_pct = str(_itm["gst_pct"] // 2)
                                 else:
@@ -2712,4 +2797,58 @@ elif page == "🧾 Generate Invoice":
 
     else:
         st.error("🚫 Access Denied. This page is for Admins only.")
+
+# ==========================================
+# PAGE: 📁 SAVED INVOICES (ADMIN ONLY)
+# ==========================================
+elif page == "📁 Saved Invoices":
+    if st.session_state.role == "Admin":
+        st.header("📁 Saved Invoices")
+        st.caption("View or Delete previously generated invoices.")
+        
+        if invoices_sheet:
+            inv_data = invoices_sheet.get_all_records()
+            if inv_data:
+                inv_df = pd.DataFrame(inv_data)
+                # We need the physical row number to delete/edit rows starting from 2
+                inv_df["_Row"] = range(2, len(inv_df) + 2)
+                
+                if "Invoice Number" in inv_df.columns:
+                    # Sort list newest top
+                    inv_df = inv_df.sort_values(by="_Row", ascending=False).copy()
+                    
+                    st.dataframe(inv_df.drop(columns=["_Row", "Items JSON"], errors='ignore'), use_container_width=True)
+                    
+                    st.divider()
+                    st.subheader("Manage Invoice")
+                    
+                    action_inv = st.selectbox("Select Invoice to Manage", inv_df["Invoice Number"].tolist())
+                    
+                    if action_inv:
+                        sel_row = inv_df[inv_df["Invoice Number"] == action_inv].iloc[0]
+                        row_idx = int(sel_row["_Row"])
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button(f"🗑️ Delete {action_inv}", type="primary"):
+                                invoices_sheet.delete_rows(row_idx)
+                                st.success(f"Invoice {action_inv} deleted successfully!")
+                                st.rerun()
+                            st.caption("WARNING: Deleting this row will remove it forever.")
+                        with col2:
+                            if st.button("🗑️ Delete All Invoices", type="secondary"):
+                                # Clear all data rows (keep header)
+                                invoices_sheet.resize(rows=1)
+                                invoices_sheet.resize(rows=500)
+                                st.toast("All invoices deleted!")
+                                st.rerun()
+                            st.info("Edit functionality defaults to direct edits in Google Sheets to prevent out-of-sync carts.")
+                else:
+                    st.warning("Invoice Number column not found in sheet.")
+            else:
+                st.info("No invoices found.")
+        else:
+            st.error("Invoices sheet is not accessible.")
+    else:
+        st.error("🚫 Access Denied.")
 
