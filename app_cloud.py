@@ -2357,19 +2357,40 @@ elif page == "🧾 Generate Invoice":
             except Exception as e:
                 st.warning(f"⚠️ Could not load transporters: {e}")
 
-        disp_select, disp1, disp2 = st.columns(3)
-        with disp_select:
-            inv_transporter = st.selectbox("Select Transporter (Optional)", [""] + transporter_names, key="inv_transporter")
-            inv_transporter_id = ""
-            if inv_transporter and not trans_df.empty:
-                match = trans_df[trans_df["Transporter Name"] == inv_transporter]
-                if not match.empty:
-                    for col in match.columns:
-                        if 'id' in col.lower() or 'gstin' in col.lower():
-                            inv_transporter_id = str(match.iloc[0][col]).strip()
-                            break
-            if inv_transporter:
-                st.caption(f"📌 Transporter ID: `{inv_transporter_id}`")
+        create_new_trans = st.toggle("➕ Add New Transporter", value=False, key="inv_new_trans_toggle")
+        
+        if create_new_trans:
+            nt1, nt2 = st.columns(2)
+            with nt1:
+                inv_transporter = st.text_input("Transporter Name", key="inv_new_trans_name")
+            with nt2:
+                inv_transporter_id = st.text_input("Transporter ID (GSTIN/Enrollment)", key="inv_new_trans_id")
+            
+            if st.button("💾 Save Transporter to List", type="secondary"):
+                if inv_transporter and manglam_trans_sheet:
+                    manglam_trans_sheet.append_row([inv_transporter, inv_transporter_id])
+                    st.success(f"✅ Added {inv_transporter} to the Transporters list!")
+                    fetch_basic_records.clear()
+                    st.rerun()
+                else:
+                    st.warning("Please enter a Transporter Name to save.")
+                    
+            disp1, disp2 = st.columns(2)
+        else:
+            disp_select, disp1, disp2 = st.columns(3)
+            with disp_select:
+                inv_transporter = st.selectbox("Select Transporter (Optional)", [""] + transporter_names, key="inv_transporter")
+                inv_transporter_id = ""
+                if inv_transporter and not trans_df.empty:
+                    match = trans_df[trans_df["Transporter Name"] == inv_transporter]
+                    if not match.empty:
+                        for col in match.columns:
+                            if 'id' in col.lower() or 'gstin' in col.lower():
+                                inv_transporter_id = str(match.iloc[0][col]).strip()
+                                break
+                if inv_transporter:
+                    st.caption(f"📌 Transporter ID: `{inv_transporter_id}`")
+                    
         with disp1:
             inv_eway_bill = st.text_input("e-Way Bill Number", key="inv_eway", placeholder="e.g. 1234 5678 9012")
         with disp2:
