@@ -429,6 +429,48 @@ def hindi_df_columns(dataframe, col_names):
 
 
 # 🟢 LOAD INVENTORY SAFELY
+# ==========================================
+# 🚨 MORNING PENDING ALERT CHECK
+# ==========================================
+def check_morning_pending_alert():
+    try:
+        now_ist = datetime.now(IST)
+        if now_ist.weekday() == 6: return # Sunday
+        if now_ist.hour >= 11:
+            today_str = now_ist.strftime("%Y-%m-%d")
+            import os
+            alert_file = "last_morning_alert.txt"
+            last_alert = ""
+            if os.path.exists(alert_file):
+                with open(alert_file, "r") as f: last_alert = f.read().strip()
+                
+            if last_alert != today_str:
+                orders_df = fetch_orders_cache(orders_sheet)
+                if not orders_df.empty and 'Status' in orders_df.columns:
+                    pending_df = orders_df[orders_df['Status'].isin(['Pending', 'Pending - Awaited Payment'])]
+                    if not pending_df.empty:
+                        tg_token = st.secrets.get("TELEGRAM_BOT_TOKEN", None)
+                        tg_chat_id = st.secrets.get("TELEGRAM_CHAT_ID", None)
+                        if tg_token and tg_chat_id:
+                            import urllib.parse
+                            alert_text = "⏳ *MORNING PENDING ORDERS REPORT* ⏳\n\n"
+                            alert_text += f"You have {len(pending_df)} orders pending dispatch:\n\n"
+                            for _, ro in pending_df.iterrows():
+                                alert_text += f"🔸 🆔 {ro.get('Order ID')} | 👤 {hindi(str(ro.get('Customer Name')))}\n"
+                                
+                            alert_text += f"\n👉 Portal: https://manglam-tradelink.streamlit.app"
+                            encoded_text = urllib.parse.quote(alert_text)
+                            import requests
+                            requests.get(f"https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_chat_id}&text={encoded_text}", timeout=5)
+                            
+                # Save state even if no pending orders today to avoid looping
+                with open(alert_file, "w") as f: f.write(today_str)
+    except Exception as e:
+        pass
+
+if st.session_state.get('logged_in'):
+    check_morning_pending_alert()
+
 df = fetch_stock_cache(stock_sheet)
 
 # 🟢 THE FIX: Global Safety Net to prevent KeyErrors across all pages
