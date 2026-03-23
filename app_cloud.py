@@ -356,6 +356,18 @@ def fetch_orders_cache(_sheet):
         headers = [str(h).strip() for h in data[0]]
         if len(data) == 1: return pd.DataFrame(columns=headers)
         df = pd.DataFrame(data[1:], columns=headers).replace("", None).dropna(how='all').fillna("")
+        
+        # 🟢 HIDE DUPLICATE TALLY ORDERS LINKED TO APP ORDERS
+        if 'Notes' in df.columns and 'Order ID' in df.columns:
+            import re
+            linked_ids = []
+            for note in df['Notes']:
+                if '🔗 Linked: TALLY-' in str(note):
+                    matches = re.findall(r'🔗 Linked: (TALLY-\d+)', str(note))
+                    linked_ids.extend(matches)
+            if linked_ids:
+                df = df[~df['Order ID'].isin(linked_ids)]
+                
         return df
     except: return pd.DataFrame()
 
